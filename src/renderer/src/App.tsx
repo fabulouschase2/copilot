@@ -6,6 +6,7 @@ import { PracticePanel } from './PracticePanel'
 import { SetupPanel } from './SetupPanel'
 import { ChatPanel } from './ChatPanel'
 import { ReadScreenModal } from './ReadScreenModal'
+import { AudioDiagnosticsModal } from './AudioDiagnosticsModal'
 
 type View = 'interview' | 'practice' | 'meetings' | 'chat' | 'setup'
 
@@ -28,6 +29,7 @@ export function App(): React.JSX.Element {
   const [pinned, setPinned] = useState(false)
   const [session, setSession] = useState<TranscriptStatusEvent | null>(null)
   const [screenOpen, setScreenOpen] = useState(false)
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
 
   useEffect(() => {
     void window.copilot.getSettings().then(setSettings)
@@ -74,6 +76,9 @@ export function App(): React.JSX.Element {
         </span>
         <span className="grow" />
         {activeProviderLabel && <span className="badge accent">{activeProviderLabel}</span>}
+        <button className="chip" title="Audio diagnostics" onClick={() => setDiagnosticsOpen(true)}>
+          🎚 Audio
+        </button>
         <button className="chip" title="Read the current screen (Ctrl+Alt+R)" onClick={() => setScreenOpen(true)}>
           Read screen
         </button>
@@ -112,7 +117,14 @@ export function App(): React.JSX.Element {
       </div>
 
       <div className="view">
-        {view === 'interview' && <InterviewPanel settings={settings} onOpenScreenRead={() => setScreenOpen(true)} />}
+        {view === 'interview' && (
+          <InterviewPanel
+            settings={settings}
+            onOpenScreenRead={() => setScreenOpen(true)}
+            onOpenDiagnostics={() => setDiagnosticsOpen(true)}
+            onChangeSettings={persistSettings}
+          />
+        )}
         {view === 'practice' && <PracticePanel settings={settings} />}
         {view === 'meetings' && <MeetingPanel settings={settings} />}
         {view === 'chat' && <ChatPanel settings={settings} onOpenSettings={() => setView('setup')} />}
@@ -127,6 +139,8 @@ export function App(): React.JSX.Element {
           settings={settings}
         />
       )}
+
+      {diagnosticsOpen && <AudioDiagnosticsModal onClose={() => setDiagnosticsOpen(false)} />}
     </div>
   )
 }

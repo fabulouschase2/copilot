@@ -82,6 +82,10 @@ export class TranscriptService {
    */
   private recentTranscript: Array<{ segmentId: string; seq: number; text: string }> = []
   private readonly recentLimit = 20
+  /** Wall-clock time of the last finalized transcript segment (diagnostics). */
+  private lastSegmentAt: string | null = null
+  /** Last audio-pipeline error (diagnostics; messages are secret-free). */
+  private lastError: { sessionId: string; code: string; message: string; at: string } | null = null
   private events: TranscriptEvents = {
     onStatus: () => undefined,
     onPartial: () => undefined,
@@ -98,6 +102,42 @@ export class TranscriptService {
 
   bindEvents(events: TranscriptEvents): void {
     this.events = events
+  }
+
+  /** Snapshot for the audio diagnostics view (no credentials, no raw audio). */
+  getDiagnostics(): {
+    session: {
+      id: string
+      state: TranscriptSessionState
+      source: TranscriptSource
+      purpose: import('../../shared/protocol').SessionPurpose
+      muted: boolean
+      speechActive: boolean
+      metrics: TranscriptMetrics
+    } | null
+    lastSegmentAt: string | null
+    lastError: { sessionId: string; code: string; message: string; at: string } | null
+  } {
+    const s = this.session
+    return {
+      session: s
+        ? {
+            id: s.id,
+            state: s.state,
+            source: s.source,
+            purpose: s.purpose,
+            muted: s.muted,
+            speechActive: s.speechActive,
+            metrics: { ...s.metrics }
+          }
+        : null,
+      lastSegmentAt: this.lastSegmentAt,
+      lastError: this.lastError
+    }
+  }
+
+  private recordError(sessionId: string, code: string, message: string): void {
+    this.lastError = { sessionId, code, message, at: new Date().toISOString() }
   }
 
   get activeSessionId(): string | null {
@@ -192,7 +232,10 @@ export class TranscriptService {
           this.events.onPartial({ sessionId: s.id, segmentId: s.liveSegmentId, text })
         },
         onFinal: (key, text) => this.publishStreamFinal(s, text),
-        onError: (message) => this.events.onError({ sessionId: s.id, code: 'stt', message })
+        onError: (message) => {
+          this.recordError(s.id, 'stt', message)
+          this.events.onError({ sessionId: s.id, code: 'stt', message })
+        }
       })
     }
     this.emitStatus(s)
@@ -340,11 +383,9 @@ export class TranscriptService {
       .catch((err: unknown) => {
         if (s.abort.signal.aborted) return { text: '' } // cancelled at stop: drop quietly
         s.metrics.sttErrors += 1
-        this.events.onError({
-          sessionId: s.id,
-          code: 'stt',
-          message: err instanceof Error ? err.message : 'Transcription failed'
-        })
+        const message = err instanceof Error ? err.message : 'Transcription failed'
+        this.recordError(s.id, 'stt', message)
+        this.events.onError({ sessionId: s.id, code: 'stt', message })
         return { text: '' }
       })
 
@@ -409,6 +450,7 @@ export class TranscriptService {
     }
 
     s.metrics.segmentsFinalized += 1
+    this.lastSegmentAt = new Date().toISOString()
     this.recentTranscript.push({ segmentId: seg.segmentId, seq: seg.publishSeq, text: seg.text })
     if (this.recentTranscript.length > this.recentLimit) this.recentTranscript.shift()
     // Practice sessions stay out of the shared context engine entirely:

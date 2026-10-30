@@ -134,6 +134,9 @@ const api: CopilotApi = {
   onModeError: (cb: (e: { channel: string; requestId: string; message: string }) => void) => on(IPC.modeError, cb),
   onModeQuestion: (cb: (e: ModeQuestion) => void) => on(IPC.modeQuestion, cb),
 
+  /* audio diagnostics (transformation) */
+  getAudioDiagnostics: () => ipcRenderer.invoke(IPC.audioDiagnostics),
+
   /* profiles (transformation) */
   listProfiles: () => ipcRenderer.invoke(IPC.profilesList),
   createProfile: (req: z.infer<typeof ProfileCreateRequestSchema>) =>

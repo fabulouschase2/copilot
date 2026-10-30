@@ -95,9 +95,23 @@ export function MeetingPanel(props: { settings: AppSettings }): React.JSX.Elemen
     const offStatus = window.copilot.onTranscriptStatus((e) => {
       if (sessionIdRef.current === e.sessionId || e.state === 'stopped') setStatus(e)
     })
+    // Audio pipeline errors must never be silent during a meeting either.
+    const offError = window.copilot.onTranscriptError((e) => {
+      if (sessionIdRef.current && e.sessionId !== sessionIdRef.current) return
+      setError(
+        e.code === 'stt'
+          ? `Transcription failed: ${e.message} Check the transcription provider in Settings → Providers.`
+          : e.code === 'permission'
+            ? `Audio permission was denied: ${e.message}`
+            : e.code === 'device'
+              ? `Audio device problem: ${e.message}`
+              : e.message
+      )
+    })
     return () => {
       offSeg()
       offStatus()
+      offError()
     }
   }, [])
 

@@ -9,6 +9,15 @@ export interface SpeakHandle {
   cancel(): void
 }
 
+export interface SpeakOptions {
+  lang?: string
+  rate?: number
+  /** Fired when playback actually starts (voices may load async). */
+  onStart?: () => void
+  /** Fired when playback finishes, is cancelled, or fails. */
+  onEnd?: () => void
+}
+
 export function ttsSupported(): boolean {
   return typeof window !== 'undefined' && 'speechSynthesis' in window
 }
@@ -26,19 +35,43 @@ export function pickVoice(lang: string): SpeechSynthesisVoice | null {
   return loose ?? voices[0]
 }
 
-/** Speak text; resolves when speech finishes (or is cancelled). */
-export function speak(text: string, opts: { lang?: string; rate?: number } = {}): SpeakHandle {
-  if (!ttsSupported()) return { cancel: () => undefined }
+/**
+ * Speak text; the returned handle cancels playback. onStart/onEnd let the
+ * caller guard the capture path (e.g. mute the practice mic while the
+ * interviewer voice is playing, so the app never transcribes its own
+ * question as the user's answer).
+ */
+export function speak(text: string, opts: SpeakOptions = {}): SpeakHandle {
+  if (!ttsSupported()) {
+    opts.onEnd?.()
+    return { cancel: () => undefined }
+  }
   const u = new SpeechSynthesisUtterance(text)
   const lang = opts.lang && opts.lang !== 'auto' ? opts.lang : 'en-US'
   u.lang = lang
   u.rate = opts.rate ?? 1
   const voice = pickVoice(lang)
   if (voice) u.voice = voice
+  let started = false
+  const finish = (): void => {
+    if (!started) return
+    started = false
+    opts.onEnd?.()
+  }
+  u.onstart = () => {
+    started = true
+    opts.onStart?.()
+  }
+  u.onend = finish
+  u.onerror = finish
+  // If a voice is instantly unavailable the events above may never fire.
   window.speechSynthesis.cancel() // never queue over a previous question
   window.speechSynthesis.speak(u)
   return {
-    cancel: () => window.speechSynthesis.cancel()
+    cancel: () => {
+      window.speechSynthesis.cancel()
+      finish()
+    }
   }
 }
 

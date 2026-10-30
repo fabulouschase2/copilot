@@ -76,6 +76,7 @@ export interface IpcDeps {
   saveMeeting: (raw: unknown) => { ok: boolean; message?: string }
   deleteMeeting: (meetingId: string) => { ok: boolean }
   getMeeting: (meetingId: string) => MeetingDetail | undefined
+  getAudioDiagnostics: () => import('../shared/protocol').AudioDiagnosticsInfo
 }
 
 function send(window: BrowserWindow | null, channel: string, payload: unknown): void {
@@ -180,6 +181,10 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   })
 
   ipcMain.handle(IPC.windowTogglePin, () => togglePinned())
+
+  /* ── Audio diagnostics (transformation) ─────────────────────────────── */
+
+  ipcMain.handle(IPC.audioDiagnostics, () => deps.getAudioDiagnostics())
 
   /* ── Transcription (Stage 5) ─────────────────────────────────────────── */
 

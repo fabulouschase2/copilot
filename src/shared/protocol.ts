@@ -86,6 +86,7 @@ export const IPC = {
   practiceList: 'practice:list',
   practiceGet: 'practice:get',
   practiceDelete: 'practice:delete',
+  audioDiagnostics: 'audio:diagnostics',
   practiceDelta: 'practice:delta',
   practiceQuestion: 'practice:question',
   practiceEvaluated: 'practice:evaluated',
@@ -756,6 +757,41 @@ export interface ProviderTestResult {
   latencyMs: number | null
 }
 
+/* ─── Transformation: audio diagnostics ─────────────────────────────────── */
+
+/**
+ * Audio pipeline snapshot for the diagnostics view. Contains NO audio
+ * content and NO credentials — only states, counters, and timestamps.
+ */
+export interface AudioDiagnosticsInfo {
+  /** The source the NEXT Start will use (from settings). */
+  configuredSource: 'mic' | 'system'
+  stt: {
+    label: string | null
+    kind: 'stt-segment' | 'stt-stream' | null
+    language: string | null
+    cloudOrLocal: 'cloud' | 'local' | 'none'
+    hasCredential: boolean
+  }
+  permissions: {
+    /** True while an approval is armed and not yet consumed. */
+    mediaArmed: boolean
+    displayCaptureArmed: boolean
+  }
+  session: {
+    id: string
+    state: 'armed' | 'listening' | 'paused' | 'stopped'
+    source: 'mic' | 'system'
+    purpose: SessionPurpose
+    muted: boolean
+    speechActive: boolean
+    metrics: TranscriptMetrics
+  } | null
+  /** Wall-clock time of the last finalized transcript segment (any session). */
+  lastSegmentAt: string | null
+  lastError: { sessionId: string; code: string; message: string; at: string } | null
+}
+
 /* ─── Transformation: personal profiles ─────────────────────────────────── */
 
 export interface ProfileInfo {
@@ -965,6 +1001,8 @@ export interface CopilotApi {
   onChatChunk(cb: (e: ChatChunkEvent) => void): () => void
   onChatDone(cb: (e: { requestId: string }) => void): () => void
   onChatError(cb: (e: z.infer<typeof ChatErrorEventSchema>) => void): () => void
+  /* audio diagnostics */
+  getAudioDiagnostics(): Promise<AudioDiagnosticsInfo>
   /* profiles */
   listProfiles(): Promise<{ profiles: ProfileInfo[] }>
   createProfile(req: z.infer<typeof ProfileCreateRequestSchema>): Promise<{ ok: boolean; profileId?: string; message?: string }>

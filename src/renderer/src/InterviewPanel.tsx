@@ -5,9 +5,11 @@ import {
   InterviewSettings,
   ModeQuestion,
   ModeResultEvent,
+  TranscriptSource,
   TranscriptStatusEvent
 } from '../../shared/protocol'
 import { renderAnswer } from './answerRender'
+import { startCapture, CaptureSession, CaptureError } from './audio/capture'
 import { ErrorBox, NoticeBox } from './ui'
 
 /**
@@ -16,6 +18,13 @@ import { ErrorBox, NoticeBox } from './ui'
  * → Your Answer (streamed, refineable). Modes are grouped Research /
  * Behavioral / Coding; answer length is a separate control. Everything here
  * reuses the existing answer-generation services and IPC contracts.
+ *
+ * AUDIO CONTRACT (regression-critical): the renderer is the sensor. Start
+ * interview MUST start renderer capture (startCapture) and stream PCM chunks
+ * to the main process — prepare/begin alone leave the session "listening"
+ * with zero audio flowing (this exact bug shipped once: status showed
+ * Listening while nothing was ever captured). tests/renderer-contracts.test.ts
+ * pins this.
  */
 
 const MODES: Array<{ id: AnswerStyle; label: string; group: string }> = [
@@ -36,8 +45,10 @@ interface Segment {
 export function InterviewPanel(props: {
   settings: AppSettings
   onOpenScreenRead: () => void
+  onOpenDiagnostics?: () => void
+  onChangeSettings: (s: AppSettings) => void
 }): React.JSX.Element {
-  const { settings, onOpenScreenRead } = props
+  const { settings, onOpenScreenRead, onOpenDiagnostics, onChangeSettings } = props
   const iv: InterviewSettings = settings.interview
 
   const [status, setStatus] = useState<TranscriptStatusEvent | null>(null)
@@ -55,11 +66,13 @@ export function InterviewPanel(props: {
 
   const requestIdRef = useRef<string | null>(null)
   const sessionIdRef = useRef<string | null>(null)
+  const captureRef = useRef<CaptureSession | null>(null)
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const autoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const listening = status?.state === 'listening'
   const inSession = status !== null && status.state !== 'stopped'
+  const liveSource: TranscriptSource | null = status?.source ?? null
 
   /* ── streaming subscriptions ─────────────────────────────────────────── */
   useEffect(() => {
@@ -83,12 +96,26 @@ export function InterviewPanel(props: {
       if (e.action === 'end-session') endInterviewRef.current()
       if (e.action === 'read-screen') onOpenScreenRead()
     })
+    // Audio pipeline errors (permission, device, STT) must never be silent.
+    const offTranscriptError = window.copilot.onTranscriptError((e) => {
+      if (sessionIdRef.current && e.sessionId !== sessionIdRef.current) return
+      setError(
+        e.code === 'stt'
+          ? `Transcription failed: ${e.message} Check the transcription provider in Settings → Providers.`
+          : e.code === 'permission'
+            ? `Audio permission was denied: ${e.message}`
+            : e.code === 'device'
+              ? `Audio device problem: ${e.message}`
+              : e.message
+      )
+    })
     return () => {
       offDelta()
       offResult()
       offError()
       offStatus()
       offTrigger()
+      offTranscriptError()
     }
   }, [onOpenScreenRead])
 
@@ -165,22 +192,65 @@ export function InterviewPanel(props: {
   }
 
   /* ── session lifecycle ──────────────────────────────────────────────── */
+  const endInterviewRef = useRef<() => void>(() => undefined)
+
+  /** Source switch (idle only): persists via the shared settings contract. */
+  const onChangeSource = (source: TranscriptSource): void => {
+    onChangeSettings({ ...settings, interview: { ...iv, source } })
+  }
+
   const startInterview = useCallback(async (): Promise<void> => {
     setError(null)
+    setNotice(null)
     const prepared = await window.copilot.prepareTranscript(iv.source, 'interview')
     if (!prepared.ok || !prepared.sessionId) {
       setError(
         prepared.message ??
-          'Live listening needs a transcription provider (Settings → Listening). You can still type questions manually.'
+          'Live listening needs a transcription provider (Settings → Providers). You can still type questions manually.'
       )
       return
     }
-    sessionIdRef.current = prepared.sessionId
-    window.copilot.beginTranscript(prepared.sessionId)
+    const sessionId = prepared.sessionId
+    sessionIdRef.current = sessionId
+    window.copilot.beginTranscript(sessionId)
+    // THE SENSOR: the renderer acquires the OS stream and streams PCM chunks
+    // to the main process. Without this the session sits "listening" with no
+    // audio (the shipped v0.2.0 bug). Status/segments/error events above take
+    // over from here.
+    try {
+      captureRef.current = await startCapture(iv.source, undefined, (seq, b64) => {
+        if (sessionIdRef.current) window.copilot.sendAudioChunk(sessionIdRef.current, seq, b64)
+      })
+      captureRef.current.onEnded(() => {
+        setError(
+          iv.source === 'mic'
+            ? 'The microphone was disconnected. The session was stopped.'
+            : 'The system-audio capture ended (the source stream stopped). The session was stopped.'
+        )
+        endInterviewRef.current()
+      })
+      setNotice(
+        iv.source === 'mic'
+          ? 'Listening to the microphone. Play or speak the interview audio through the computer for System audio instead.'
+          : 'Listening to system audio (everything the computer plays). Use the microphone selector for your own voice.'
+      )
+    } catch (err) {
+      const message = err instanceof CaptureError ? err.message : 'Could not start audio capture.'
+      setError(
+        iv.source === 'system'
+          ? `${message} System audio needs Windows loopback; try again or use the microphone.`
+          : message
+      )
+      window.copilot.stopTranscript(sessionId)
+      sessionIdRef.current = null
+      setStatus(null)
+    }
   }, [iv.source])
 
   const endInterview = useCallback((): void => {
     cancelAutoAnswer()
+    captureRef.current?.stop()
+    captureRef.current = null
     const sessionId = sessionIdRef.current
     if (sessionId) window.copilot.stopTranscript(sessionId)
     sessionIdRef.current = null
@@ -188,11 +258,9 @@ export function InterviewPanel(props: {
     setSegments([])
     setShowTranscript(false)
   }, [cancelAutoAnswer])
-  const endInterviewRef = useRef(endInterview)
   endInterviewRef.current = endInterview
 
-  /* ── detected questions: fill Interviewer + optional auto-answer ────── */
-  useEffect(() => {
+  /* ── detected questions: fill Interviewer + optional auto-answer ────── */  useEffect(() => {
     return window.copilot.onModeQuestion((q: ModeQuestion) => {
       setQuestion(q.text)
       if (!iv.autoAnswer || !listening || busy) return
@@ -260,10 +328,33 @@ export function InterviewPanel(props: {
   return (
     <>
       <div className="iv-session">
-        <span className={`dot ${listening ? 'rec' : ''}`} />
-        <span className="iv-status">{statusLabel}</span>
+        <span className={`dot ${listening ? (status?.speechActive ? 'rec' : 'live') : ''}`} />
+        <span className="iv-status">
+          {statusLabel}
+          {listening && status?.speechActive ? ' · hearing speech' : listening ? ' · silent' : ''}
+        </span>
+        {inSession && liveSource && (
+          <span className="badge accent">
+            {liveSource === 'mic' ? 'Microphone' : 'System audio'}
+          </span>
+        )}
         {countdown !== null && <span className="badge accent">Answering in {countdown}s…</span>}
         <span className="grow" />
+        {!inSession && (
+          <select
+            value={iv.source}
+            onChange={(e) => onChangeSource(e.target.value as TranscriptSource)}
+            title="Which audio to listen to"
+          >
+            <option value="mic">Microphone</option>
+            <option value="system">System audio</option>
+          </select>
+        )}
+        {onOpenDiagnostics && (
+          <button className="chip" onClick={onOpenDiagnostics} title="Audio diagnostics">
+            🎚
+          </button>
+        )}
         {inSession ? (
           <button className="chip" onClick={endInterview}>
             End interview

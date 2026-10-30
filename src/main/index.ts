@@ -308,6 +308,32 @@ if (!SINGLE_INSTANCE_LOCK) {
       }
     }
 
+    const getAudioDiagnostics = (): import('../shared/protocol').AudioDiagnosticsInfo => {
+      const stt = sttRegistry.resolveActive()
+      const sttRow = (() => {
+        const s = settings.get().stt
+        return s.providers.find((p) => p.id === s.activeSttProviderId) ?? s.providers.find((p) => p.enabled) ?? null
+      })()
+      const diag = transcript.getDiagnostics()
+      return {
+        configuredSource: settings.get().interview.source,
+        stt: {
+          label: stt?.label ?? null,
+          kind: sttRow?.kind ?? null,
+          language: stt?.language ?? sttRow?.language ?? null,
+          cloudOrLocal: stt?.kind ?? 'none',
+          hasCredential: sttRow ? creds.has(sttRow.id) : false
+        },
+        permissions: {
+          mediaArmed: permissionGate.isArmed('media'),
+          displayCaptureArmed: permissionGate.isArmed('display-capture')
+        },
+        session: diag.session,
+        lastSegmentAt: diag.lastSegmentAt,
+        lastError: diag.lastError
+      }
+    }
+
     registerIpcHandlers({
       settings,
       creds,
@@ -325,6 +351,7 @@ if (!SINGLE_INSTANCE_LOCK) {
       saveMeeting,
       deleteMeeting,
       getMeeting: meetingDetail,
+      getAudioDiagnostics,
       searchMeetings: (query: string) =>
         contextSqlite.searchMeetings(query).map((m) => ({
           meetingId: m.meetingId,
@@ -364,10 +391,28 @@ if (!SINGLE_INSTANCE_LOCK) {
 
     // OS permission gates: the renderer can only obtain mic/display-capture
     // access when the user pressed Start and the gate was armed (Module J).
+    //
+    // Electron-flow note (verified live on Electron 38, Windows): a renderer
+    // getDisplayMedia() for system-audio loopback arrives here FIRST as a
+    // 'media' permission request — denying it prevents the display-media
+    // handler below from ever being consulted, and the capture fails with
+    // NotAllowedError while the 'display-capture' arm sits unused (this was
+    // the shipped system-audio denial). So: a 'media' request grants directly
+    // from the mic arm when armed; when the system-audio arm is armed instead
+    // it is the loopback front door and is granted WITHOUT consuming — the
+    // single-use consumption happens in the display-media handler, which is
+    // the step that actually provides the loopback source. Every grant still
+    // requires an unexpired arm from an explicit Start click.
     session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
-      if (permission === 'media') callback(permissionGate.consume('media'))
-      else if (permission === 'display-capture') callback(permissionGate.consume('display-capture'))
-      else callback(false)
+      if (permission === 'media') {
+        if (permissionGate.isArmed('media')) callback(permissionGate.consume('media'))
+        else if (permissionGate.isArmed('display-capture')) callback(true)
+        else callback(false)
+      } else if (permission === 'display-capture') {
+        callback(permissionGate.isArmed('display-capture'))
+      } else {
+        callback(false)
+      }
     })
     session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
       if (!permissionGate.consume('display-capture')) {

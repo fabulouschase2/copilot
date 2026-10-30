@@ -7,6 +7,7 @@
  * transcript state live in the main process.
  */
 import { TranscriptSource } from '../../../shared/protocol'
+import { captureDiagnostics, resetCaptureDiagnostics } from './capture-state'
 
 const TARGET_RATE = 16_000
 
@@ -49,11 +50,18 @@ export async function startCapture(
           })
   } catch (err) {
     const name = err instanceof Error ? err.name : ''
-    if (name === 'NotAllowedError') throw new CaptureError('denied', 'Microphone or capture permission was denied.')
+    const message =
+      name === 'NotAllowedError'
+        ? 'Microphone or capture permission was denied.'
+        : name === 'NotFoundError' || name === 'OverconstrainedError'
+          ? 'No audio input device found.'
+          : `Could not start capture: ${name || 'unknown error'}`
+    resetCaptureDiagnostics({ active: false, source, lastError: message })
+    if (name === 'NotAllowedError') throw new CaptureError('denied', message)
     if (name === 'NotFoundError' || name === 'OverconstrainedError') {
-      throw new CaptureError('no-device', 'No audio input device found.')
+      throw new CaptureError('no-device', message)
     }
-    throw new CaptureError('unknown', `Could not start capture: ${name || 'unknown error'}`)
+    throw new CaptureError('unknown', message)
   }
 
   // Loopback capture carries a video track we immediately stop; only audio flows.
@@ -61,15 +69,18 @@ export async function startCapture(
   const audioTracks = stream.getAudioTracks()
   if (audioTracks.length === 0) {
     stream.getTracks().forEach((t) => t.stop())
-    throw new CaptureError(
-      'no-audio-track',
+    const message =
       source === 'system'
         ? 'No system audio was shared. On Windows, enable "Share system audio" or use a loopback-capable setup.'
         : 'The selected device has no audio track.'
-    )
+    resetCaptureDiagnostics({ active: false, source, lastError: message })
+    throw new CaptureError('no-audio-track', message)
   }
 
-  const endedHandler = (): void => endedCallbacks.forEach((cb) => cb())
+  const endedHandler = (): void => {
+    resetCaptureDiagnostics({ active: false, lastError: 'Audio track ended (device disconnected or stream stopped).' })
+    endedCallbacks.forEach((cb) => cb())
+  }
   const endedCallbacks: Array<() => void> = []
   audioTracks[0].addEventListener('ended', endedHandler)
 
@@ -78,8 +89,19 @@ export async function startCapture(
     ctx = new AudioContext()
   } catch (err) {
     stream.getTracks().forEach((t) => t.stop())
+    resetCaptureDiagnostics({ active: false, source, lastError: 'AudioContext failed' })
     throw new CaptureError('unknown', `AudioContext failed: ${String(err)}`)
   }
+
+  resetCaptureDiagnostics({
+    active: true,
+    source,
+    sampleRate: ctx.sampleRate,
+    chunksSent: 0,
+    lastChunkAt: null,
+    startedAt: Date.now(),
+    lastError: null
+  })
 
   let workletFailed = false
   let processor: AudioWorkletNode | ScriptProcessorNode | null = null
@@ -92,7 +114,10 @@ export async function startCapture(
     const flat = flatten(blocks)
     const resampled = downsample(flat, ctx.sampleRate, TARGET_RATE)
     const b64 = floatToPcm16Base64(resampled)
-    if (b64.length > 0) sendChunk(seq++, b64)
+    if (b64.length > 0) {
+      resetCaptureDiagnostics({ chunksSent: captureDiagnostics.chunksSent + 1, lastChunkAt: Date.now() })
+      sendChunk(seq++, b64)
+    }
   }
 
   try {
@@ -134,6 +159,7 @@ export async function startCapture(
     stop(): void {
       if (stopped) return
       stopped = true
+      resetCaptureDiagnostics({ active: false, lastChunkAt: captureDiagnostics.lastChunkAt })
       if (processor) {
         try {
           processor.disconnect()

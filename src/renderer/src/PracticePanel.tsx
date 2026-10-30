@@ -102,15 +102,29 @@ export function PracticePanel(props: { settings: AppSettings }): React.JSX.Eleme
       setEvalStreaming(false)
       if (autoSpeak && ttsSupported()) {
         setSpeaking(true)
-        const handle = speak(e.question, { lang: settings.responseLanguage, rate: 1 })
+        // FEEDBACK-LOOP GUARD: while the interviewer voice plays, mute the
+        // practice capture so the spoken question is never transcribed into
+        // the user's answer buffer.
+        const sid = sessionIdRef.current
+        if (sid) window.copilot.muteTranscript(sid, true)
+        const unmute = (): void => {
+          if (sessionIdRef.current) window.copilot.muteTranscript(sessionIdRef.current, false)
+        }
+        const handle = speak(e.question, {
+          lang: settings.responseLanguage,
+          rate: 1,
+          onEnd: () => {
+            unmute()
+            setSpeaking(false)
+          }
+        })
         speakHandleRef.current = {
           cancel: () => {
             handle.cancel()
+            unmute()
             setSpeaking(false)
           }
         }
-        // clear the speaking flag when speech would plausibly be done
-        setTimeout(() => setSpeaking(false), Math.min(90_000, 2_000 + e.question.length * 70))
       }
     })
     const offEvaluated = window.copilot.onPracticeEvaluated((e) => {
@@ -406,11 +420,20 @@ export function PracticePanel(props: { settings: AppSettings }): React.JSX.Eleme
                 onClick={() => {
                   if (speaking) {
                     stopSpeaking()
+                    if (sessionIdRef.current) window.copilot.muteTranscript(sessionIdRef.current, false)
                     setSpeaking(false)
                   } else {
                     setSpeaking(true)
-                    speak(question, { lang: settings.responseLanguage, rate: 1 })
-                    setTimeout(() => setSpeaking(false), Math.min(90_000, 2_000 + question.length * 70))
+                    const sid = sessionIdRef.current
+                    if (sid) window.copilot.muteTranscript(sid, true)
+                    speak(question, {
+                      lang: settings.responseLanguage,
+                      rate: 1,
+                      onEnd: () => {
+                        if (sessionIdRef.current) window.copilot.muteTranscript(sessionIdRef.current, false)
+                        setSpeaking(false)
+                      }
+                    })
                   }
                 }}
               >
