@@ -26,13 +26,20 @@ import {
   InterviewRefineRequestSchema,
   MeetingAskRequestSchema,
   MeetingGenerateRequestSchema,
+  MeetingDetail,
   NotesExportRequestSchema,
+  PracticeIdRequestSchema,
+  PracticeSubmitRequestSchema,
+  ProfileCreateRequestSchema,
+  ProfileIdRequestSchema,
+  ProfileRenameRequestSchema,
   ProfileFactOpSchema,
   ProviderInfo,
   ProviderTestResult,
   ScreenArmRequestSchema,
   ScreenCaptureRequestSchema,
   ScreenSourcesRequestSchema,
+  SessionPurposeSchema,
   TranscriptAudioChunkSchema,
   TranscriptBeginRequestSchema,
   TranscriptMuteRequestSchema,
@@ -44,6 +51,7 @@ import { CredentialStore } from './services/credential-store'
 import { ProviderRegistry } from './services/provider-registry'
 import { SettingsStore } from './services/settings-store'
 import { SttRegistry } from './services/stt/stt-registry'
+import type { PracticeService } from './services/practice/practice-service'
 
 export interface IpcDeps {
   settings: SettingsStore
@@ -55,6 +63,7 @@ export interface IpcDeps {
   screen: ScreenService
   context: ContextService
   modes: ModesService
+  practice: PracticeService
   permissionGate: PermissionGate
   getWindow: () => BrowserWindow | null
   persistence: {
@@ -63,9 +72,10 @@ export interface IpcDeps {
     restoreLatest: () => { ok: boolean; message?: string }
   }
   listMeetings: () => import('../shared/protocol').MeetingSummary[]
+  searchMeetings: (query: string) => import('../shared/protocol').MeetingSummary[]
   saveMeeting: (raw: unknown) => { ok: boolean; message?: string }
   deleteMeeting: (meetingId: string) => { ok: boolean }
-  getMeeting: (meetingId: string) => { ok: boolean; title: string; transcript: string; notes: string } | undefined
+  getMeeting: (meetingId: string) => MeetingDetail | undefined
 }
 
 function send(window: BrowserWindow | null, channel: string, payload: unknown): void {
@@ -73,13 +83,53 @@ function send(window: BrowserWindow | null, channel: string, payload: unknown): 
 }
 
 export function registerIpcHandlers(deps: IpcDeps): void {
-  const { settings, creds, registry, sttRegistry, chat, transcript, screen, context, modes, permissionGate, getWindow } = deps
+  const { settings, creds, registry, sttRegistry, chat, transcript, screen, context, modes, practice, permissionGate, getWindow } = deps
 
   ipcMain.handle(IPC.settingsGet, () => settings.get())
 
   ipcMain.handle(IPC.settingsSet, (_e, raw: unknown) => {
     const parsed = AppSettingsSchema.parse(raw)
     return settings.set(parsed)
+  })
+
+  /* ── Personal profiles (transformation) ─────────────────────────────── */
+
+  ipcMain.handle(IPC.profilesList, () => ({ profiles: depsContextProfileList() }))
+
+  function depsContextProfileList(): Array<{
+    profileId: string
+    name: string
+    factCount: number
+    createdAt: string
+    updatedAt: string
+  }> {
+    return context.listProfilesWithCounts()
+  }
+
+  ipcMain.handle(IPC.profilesCreate, (_e, raw: unknown) => {
+    const parsed = ProfileCreateRequestSchema.safeParse(raw)
+    if (!parsed.success) return { ok: false, message: 'Invalid profile name' }
+    return context.createProfile(parsed.data.name.trim())
+  })
+
+  ipcMain.handle(IPC.profilesRename, (_e, raw: unknown) => {
+    const parsed = ProfileRenameRequestSchema.safeParse(raw)
+    if (!parsed.success) return { ok: false, message: 'Invalid rename request' }
+    return context.renameProfile(parsed.data.profileId, parsed.data.name.trim())
+  })
+
+  ipcMain.handle(IPC.profilesDelete, (_e, raw: unknown) => {
+    const parsed = ProfileIdRequestSchema.safeParse(raw)
+    if (!parsed.success) return { ok: false, message: 'Invalid request' }
+    if (parsed.data.profileId === 'default') {
+      return { ok: false, message: 'The default profile cannot be deleted.' }
+    }
+    const result = context.deleteProfile(parsed.data.profileId)
+    // Deleting the active profile falls back to the default profile.
+    if (result.ok && settings.get().activeProfileId === parsed.data.profileId) {
+      settings.set({ ...settings.get(), activeProfileId: 'default' })
+    }
+    return result
   })
 
   ipcMain.handle(IPC.providersList, (): ProviderInfo[] => registry.list())
@@ -136,7 +186,8 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   ipcMain.handle(IPC.transcriptPrepare, (_e, raw: unknown) => {
     const parsed = TranscriptPrepareRequestSchema.safeParse(raw)
     if (!parsed.success) return { ok: false, message: 'Invalid prepare request' }
-    const result = transcript.prepare(parsed.data.source)
+    const purpose: import('../shared/protocol').SessionPurpose = SessionPurposeSchema.parse(parsed.data.purpose)
+    const result = transcript.prepare(parsed.data.source, purpose)
     if (!result.ok) return { ok: false, message: result.message }
     // Arm the matching OS permission exactly once, right before capture starts.
     permissionGate.arm(parsed.data.source === 'mic' ? 'media' : 'display-capture')
@@ -237,6 +288,14 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     return deps.getMeeting(parsed.data.meetingId)
   })
 
+  ipcMain.handle(IPC.meetingsSearch, (_e, raw: unknown) => {
+    const q = typeof raw === 'object' && raw !== null && typeof (raw as { query?: unknown }).query === 'string'
+      ? (raw as { query: string }).query.slice(0, 200)
+      : ''
+    if (q.trim().length === 0) return { meetings: deps.listMeetings() }
+    return { meetings: deps.searchMeetings(q.trim()) }
+  })
+
   ipcMain.handle(IPC.contextSetJobDescription, (_e, raw: unknown) => {
     const parsed = JobDescriptionRequestSchema.safeParse(raw)
     if (!parsed.success) return { ok: false, message: 'Invalid job description' }
@@ -280,6 +339,42 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 
   ipcMain.on(IPC.interviewCancel, () => modes.cancel('interview'))
   ipcMain.on(IPC.meetingCancel, () => modes.cancel('meeting'))
+
+  /* ── Practice interviews (transformation) ───────────────────────────── */
+
+  ipcMain.handle(IPC.practiceStart, (_e, raw: unknown) => practice.start(raw))
+
+  ipcMain.handle(IPC.practiceSubmit, (_e, raw: unknown) => {
+    const parsed = PracticeSubmitRequestSchema.safeParse(raw)
+    if (!parsed.success) return { ok: false, message: 'Invalid practice answer' }
+    return practice.submit(parsed.data.practiceId, parsed.data.answer, parsed.data.spoken)
+  })
+
+  ipcMain.handle(IPC.practiceEnd, (_e, raw: unknown) => {
+    const parsed = PracticeIdRequestSchema.safeParse(raw)
+    if (!parsed.success) return { ok: false, message: 'Invalid request' }
+    return practice.end(parsed.data.practiceId)
+  })
+
+  ipcMain.handle(IPC.practiceCancel, (_e, raw: unknown) => {
+    const parsed = PracticeIdRequestSchema.safeParse(raw)
+    if (!parsed.success) return { ok: false, message: 'Invalid request' }
+    return practice.cancel(parsed.data.practiceId)
+  })
+
+  ipcMain.handle(IPC.practiceList, () => ({ sessions: practice.listSessions() }))
+
+  ipcMain.handle(IPC.practiceGet, (_e, raw: unknown) => {
+    const parsed = PracticeIdRequestSchema.safeParse(raw)
+    if (!parsed.success) return undefined
+    return practice.getDetail(parsed.data.practiceId)
+  })
+
+  ipcMain.handle(IPC.practiceDelete, (_e, raw: unknown) => {
+    const parsed = PracticeIdRequestSchema.safeParse(raw)
+    if (!parsed.success) return { ok: false }
+    return practice.deleteSession(parsed.data.practiceId)
+  })
 
   ipcMain.handle(IPC.notesExport, async (_e, raw: unknown) => {
     const parsed = NotesExportRequestSchema.safeParse(raw)
@@ -330,7 +425,8 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     onSegment: (e) => {
       send(getWindow(), IPC.transcriptSegment, e)
       // Stage 8: feed finalized segments into interview question detection.
-      modes.observeTranscriptSegment(e.sessionId, e.text)
+      // Practice/meeting sessions must never create interview questions.
+      if (e.purpose === 'interview') modes.observeTranscriptSegment(e.sessionId, e.text)
     },
     onError: (e) => send(getWindow(), IPC.transcriptError, e),
     onMetrics: (e) => send(getWindow(), IPC.transcriptMetrics, e)
@@ -350,5 +446,13 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     onResult: (e) => send(getWindow(), IPC.modeResult, e),
     onError: (channel, requestId, message) => send(getWindow(), IPC.modeError, { channel, requestId, message }),
     onQuestion: (q) => send(getWindow(), IPC.modeQuestion, q)
+  })
+
+  practice.bindEvents({
+    onDelta: (e) => send(getWindow(), IPC.practiceDelta, e),
+    onQuestion: (e) => send(getWindow(), IPC.practiceQuestion, e),
+    onEvaluated: (e) => send(getWindow(), IPC.practiceEvaluated, e),
+    onFinished: (e) => send(getWindow(), IPC.practiceFinished, e),
+    onError: (e) => send(getWindow(), IPC.practiceError, e)
   })
 }

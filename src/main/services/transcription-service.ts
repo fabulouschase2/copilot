@@ -38,6 +38,7 @@ export interface TranscriptEvents {
     segmentId: string
     seq: number
     source: TranscriptSource
+    purpose: import('../../shared/protocol').SessionPurpose
     startMs: number
     endMs: number
     wallTime: string
@@ -53,6 +54,8 @@ const MAX_SEEN_KEYS = 500
 interface Session {
   id: string
   source: TranscriptSource
+  /** What the session is for: drives context feeds and UI routing. */
+  purpose: import('../../shared/protocol').SessionPurpose
   state: TranscriptSessionState
   muted: boolean
   speechActive: boolean
@@ -110,7 +113,10 @@ export class TranscriptService {
    * permission, starts capture, and calls begin(). Only one live session
    * is allowed; a new prepare while one exists is rejected with 'invalid'.
    */
-  prepare(source: TranscriptSource): { ok: true; sessionId: string } | { ok: false; message: string } {
+  prepare(
+    source: TranscriptSource,
+    purpose: import('../../shared/protocol').SessionPurpose = 'interview'
+  ): { ok: true; sessionId: string } | { ok: false; message: string } {
     if (this.session && this.session.state !== 'stopped') {
       return { ok: false, message: 'A transcription session is already active. Stop it first.' }
     }
@@ -127,6 +133,7 @@ export class TranscriptService {
     const session: Session = {
       id: sessionId,
       source,
+      purpose,
       state: 'armed',
       muted: false,
       speechActive: false,
@@ -404,12 +411,17 @@ export class TranscriptService {
     s.metrics.segmentsFinalized += 1
     this.recentTranscript.push({ segmentId: seg.segmentId, seq: seg.publishSeq, text: seg.text })
     if (this.recentTranscript.length > this.recentLimit) this.recentTranscript.shift()
-    this.context.add({
-      id: seg.segmentId,
-      kind: 'transcript',
-      text: seg.text,
-      timestamp: Date.now()
-    })
+    // Practice sessions stay out of the shared context engine entirely:
+    // spoken practice answers must never leak into live answers or meetings.
+    if (s.purpose !== 'practice') {
+      this.context.add({
+        id: seg.segmentId,
+        kind: 'transcript',
+        text: seg.text,
+        timestamp: Date.now(),
+        sessionId: s.id
+      })
+    }
     // The final replaces any live partial for stream sessions.
     this.events.onPartial({ sessionId: s.id, segmentId: s.liveSegmentId, text: '' })
     this.events.onSegment({
@@ -417,6 +429,7 @@ export class TranscriptService {
       segmentId: seg.segmentId,
       seq: seg.publishSeq,
       source: seg.source,
+      purpose: s.purpose,
       startMs: seg.startMs,
       endMs: seg.endMs,
       wallTime: new Date().toISOString(),
@@ -430,6 +443,7 @@ export class TranscriptService {
       sessionId: s.id,
       state: s.state,
       source: s.source,
+      purpose: s.purpose,
       muted: s.muted,
       speechActive: s.speechActive,
       sttProviderLabel: resolved?.label ?? 'none',

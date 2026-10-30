@@ -19,6 +19,7 @@ import { SQLiteStore } from './services/context/sqlite-store'
 import { migrateLegacyJson } from './services/context/migration'
 import { MeetingSaveRequestSchema } from '../shared/protocol'
 import { ModesService } from './services/modes/modes-service'
+import { PracticeService } from './services/practice/practice-service'
 import { createMainWindow, getMainWindow, toggleWindowVisible } from './window'
 import { electronAccelerators } from '../shared/shortcuts'
 import { dialog } from 'electron'
@@ -103,8 +104,10 @@ if (!SINGLE_INSTANCE_LOCK) {
       store: contextSqlite,
       engine: context,
       settings: () => settings.get().context,
+      activeProfileId: () => settings.get().activeProfileId,
       getWindow: getMainWindow
     })
+    const responseLanguage = (): string => settings.get().responseLanguage
     const chat = new ChatController(registry, (question) =>
       contextService.retrieve(question, {
         includeDocuments: true,
@@ -119,6 +122,15 @@ if (!SINGLE_INSTANCE_LOCK) {
       },
       retrieve: (question, options) => contextService.retrieve(question, options),
       getSessionId: () => contextService.sessionId,
+      getResponseLanguage: responseLanguage,
+      getSavedMeetingTranscript: (meetingId) => {
+        try {
+          const m = contextSqlite.getMeeting(meetingId)
+          return m ? m.transcript : null
+        } catch {
+          return null
+        }
+      },
       // User-initiated save dialog; content is what the user edited.
       saveText: async (defaultName, content) => {
         const win = getMainWindow()
@@ -138,6 +150,21 @@ if (!SINGLE_INSTANCE_LOCK) {
         }
       }
     })
+    const practice = new PracticeService({
+      store: contextSqlite,
+      resolveProvider: () => {
+        const r = registry.resolveActive()
+        return r ? { provider: r.provider, model: r.model } : null
+      },
+      getProfileFacts: (profileId) => {
+        try {
+          return contextSqlite.listFacts(profileId).map((f) => f.text)
+        } catch {
+          return []
+        }
+      },
+      getResponseLanguage: responseLanguage
+    })
     const permissionGate = new PermissionGate()
     const screenGate = new PermissionGate(SCREEN_CONSENT_TTL_MS)
     const transcript = new TranscriptService(
@@ -152,6 +179,7 @@ if (!SINGLE_INSTANCE_LOCK) {
       backend: new ElectronScreenBackend(),
       resolveVision: () => registry.resolveVision(),
       getRecentTranscript: () => transcript.getRecentTranscript(),
+      getSessionId: () => contextService.sessionId,
       context,
       armGate: screenGate
     })
@@ -221,7 +249,14 @@ if (!SINGLE_INSTANCE_LOCK) {
         title: m.title,
         createdAt: m.createdAt,
         updatedAt: m.updatedAt,
-        preview: m.notes.slice(0, 200)
+        preview: m.notes.slice(0, 200),
+        source: m.source ?? undefined,
+        language: m.language ?? undefined,
+        providerLabel: m.providerLabel ?? undefined,
+        startedAt: m.startedAt ?? undefined,
+        endedAt: m.endedAt ?? undefined,
+        durationMs: m.durationMs ?? undefined,
+        actionItemCount: m.actionItems.length
       }))
     const saveMeeting = (raw: unknown): { ok: boolean; message?: string } => {
       const parsed = MeetingSaveRequestSchema.safeParse(raw)
@@ -235,7 +270,14 @@ if (!SINGLE_INSTANCE_LOCK) {
           transcript: parsed.data.transcript,
           notes: parsed.data.notes,
           createdAt: existing?.createdAt ?? now,
-          updatedAt: now
+          updatedAt: now,
+          source: parsed.data.source ?? existing?.source ?? null,
+          language: parsed.data.language ?? existing?.language ?? null,
+          providerLabel: parsed.data.providerLabel ?? existing?.providerLabel ?? null,
+          startedAt: parsed.data.startedAt ?? existing?.startedAt ?? null,
+          endedAt: parsed.data.endedAt ?? existing?.endedAt ?? null,
+          durationMs: parsed.data.durationMs ?? existing?.durationMs ?? null,
+          actionItems: parsed.data.actionItems ?? existing?.actionItems ?? []
         })
         return { ok: true }
       } catch (err) {
@@ -243,6 +285,28 @@ if (!SINGLE_INSTANCE_LOCK) {
       }
     }
     const deleteMeeting = (meetingId: string): { ok: boolean } => ({ ok: contextSqlite.deleteMeeting(meetingId) })
+
+    const meetingDetail = (meetingId: string): import('../shared/protocol').MeetingDetail | undefined => {
+      const m = contextSqlite.getMeeting(meetingId)
+      if (!m) return undefined
+      return {
+        meetingId: m.meetingId,
+        title: m.title,
+        createdAt: m.createdAt,
+        updatedAt: m.updatedAt,
+        preview: m.notes.slice(0, 200),
+        transcript: m.transcript,
+        notes: m.notes,
+        actionItems: m.actionItems,
+        source: m.source ?? undefined,
+        language: m.language ?? undefined,
+        providerLabel: m.providerLabel ?? undefined,
+        startedAt: m.startedAt ?? undefined,
+        endedAt: m.endedAt ?? undefined,
+        durationMs: m.durationMs ?? undefined,
+        actionItemCount: m.actionItems.length
+      }
+    }
 
     registerIpcHandlers({
       settings,
@@ -254,15 +318,28 @@ if (!SINGLE_INSTANCE_LOCK) {
       screen,
       context: contextService,
       modes,
+      practice,
       permissionGate,
       getWindow: getMainWindow,
       listMeetings,
       saveMeeting,
       deleteMeeting,
-      getMeeting: (meetingId: string) => {
-        const m = contextSqlite.getMeeting(meetingId)
-        return m ? { ok: true, title: m.title, transcript: m.transcript, notes: m.notes } : undefined
-      },
+      getMeeting: meetingDetail,
+      searchMeetings: (query: string) =>
+        contextSqlite.searchMeetings(query).map((m) => ({
+          meetingId: m.meetingId,
+          title: m.title,
+          createdAt: m.createdAt,
+          updatedAt: m.updatedAt,
+          preview: m.notes.slice(0, 200),
+          source: m.source ?? undefined,
+          language: m.language ?? undefined,
+          providerLabel: m.providerLabel ?? undefined,
+          startedAt: m.startedAt ?? undefined,
+          endedAt: m.endedAt ?? undefined,
+          durationMs: m.durationMs ?? undefined,
+          actionItemCount: m.actionItems.length
+        })),
       persistence: {
         status: () => ({
           kind: 'sqlite' as const,

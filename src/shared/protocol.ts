@@ -61,6 +61,7 @@ export const IPC = {
   meetingsSave: 'meetings:save',
   meetingsDelete: 'meetings:delete',
   meetingsGet: 'meetings:get',
+  meetingsSearch: 'meetings:search',
   contextSetJobDescription: 'context:set-job-description',
   appTrigger: 'app:trigger',
   interviewAnswer: 'interview:answer',
@@ -72,7 +73,24 @@ export const IPC = {
   modeDelta: 'mode:delta',
   modeResult: 'mode:result',
   modeError: 'mode:error',
-  modeQuestion: 'mode:question'
+  modeQuestion: 'mode:question',
+  /* Transformation: session purpose, profiles, practice */
+  profilesList: 'profiles:list',
+  profilesCreate: 'profiles:create',
+  profilesRename: 'profiles:rename',
+  profilesDelete: 'profiles:delete',
+  practiceStart: 'practice:start',
+  practiceSubmit: 'practice:submit',
+  practiceEnd: 'practice:end',
+  practiceCancel: 'practice:cancel',
+  practiceList: 'practice:list',
+  practiceGet: 'practice:get',
+  practiceDelete: 'practice:delete',
+  practiceDelta: 'practice:delta',
+  practiceQuestion: 'practice:question',
+  practiceEvaluated: 'practice:evaluated',
+  practiceFinished: 'practice:finished',
+  practiceError: 'practice:error'
 } as const
 
 export const ChatRoleSchema = z.enum(['system', 'user', 'assistant'])
@@ -122,8 +140,17 @@ export const CredentialRemoveRequestSchema = z.object({
 export const TranscriptSourceSchema = z.enum(['mic', 'system'])
 export type TranscriptSource = z.infer<typeof TranscriptSourceSchema>
 
+/**
+ * What a transcription session is FOR. The purpose tags every published
+ * segment so meeting data can never contain interview questions and practice
+ * sessions stay fully separate from both.
+ */
+export const SessionPurposeSchema = z.enum(['interview', 'meeting', 'practice'])
+export type SessionPurpose = z.infer<typeof SessionPurposeSchema>
+
 export const TranscriptPrepareRequestSchema = z.object({
-  source: TranscriptSourceSchema
+  source: TranscriptSourceSchema,
+  purpose: SessionPurposeSchema.default('interview')
 })
 export const TranscriptPrepareResultSchema = z.object({
   ok: z.boolean(),
@@ -166,6 +193,7 @@ export interface TranscriptStatusEvent {
   sessionId: string
   state: TranscriptSessionState
   source: TranscriptSource | null
+  purpose: SessionPurpose
   muted: boolean
   speechActive: boolean
   sttProviderLabel: string
@@ -183,6 +211,7 @@ export interface TranscriptSegmentEvent {
   segmentId: string
   seq: number
   source: TranscriptSource
+  purpose: SessionPurpose
   /** Milliseconds relative to the session's audio timeline. */
   startMs: number
   endMs: number
@@ -458,6 +487,8 @@ export type AnswerStyle = z.infer<typeof AnswerStyleSchema>
 export const InterviewAnswerRequestSchema = z.object({
   question: z.string().min(1).max(2_000),
   style: AnswerStyleSchema,
+  /** Length/detail is a separate control from the answer style. */
+  detail: z.enum(['concise', 'detailed']).default('concise'),
   /** Current-session transcript/screen context (never other sessions). */
   includeSession: z.boolean().default(false)
 })
@@ -488,14 +519,47 @@ export const MeetingGenerateRequestSchema = z.object({
 })
 
 export const MeetingAskRequestSchema = z.object({
-  question: z.string().min(1).max(2_000)
+  question: z.string().min(1).max(2_000),
+  /**
+   * When set, the question is answered from the SAVED meeting's transcript
+   * instead of the live session. Saved transcripts are never mixed with
+   * live session context.
+   */
+  meetingId: z.string().min(1).max(64).optional()
 })
+
+/** Structured action item extracted from a meeting (evidence-only fields). */
+export interface MeetingActionItem {
+  task: string
+  owner: string
+  deadline: string
+  suggested: boolean
+}
 
 export const MeetingSaveRequestSchema = z.object({
   meetingId: z.string().min(1).max(64),
   title: z.string().min(1).max(200),
   transcript: z.string().max(500_000).default(''),
-  notes: z.string().max(500_000).default('')
+  notes: z.string().max(500_000).default(''),
+  /** Structured extraction produced at end-of-meeting (editable afterwards). */
+  actionItems: z
+    .array(
+      z.object({
+        task: z.string().max(2_000),
+        owner: z.string().max(200),
+        deadline: z.string().max(200),
+        suggested: z.boolean().default(false)
+      })
+    )
+    .max(100)
+    .optional(),
+  /** Provenance: how this meeting was recorded. */
+  source: z.enum(['mic', 'system']).optional(),
+  language: z.string().max(16).optional(),
+  providerLabel: z.string().max(64).optional(),
+  startedAt: z.string().max(40).optional(),
+  endedAt: z.string().max(40).optional(),
+  durationMs: z.number().int().min(0).max(2_147_483_647).optional()
 })
 
 export const MeetingIdRequestSchema = z.object({
@@ -511,6 +575,20 @@ export interface MeetingSummary {
   updatedAt: string
   /** Notes preview (bounded), never the full text. */
   preview: string
+  /** Provenance and lifecycle metadata for the list view. */
+  source?: 'mic' | 'system'
+  language?: string
+  providerLabel?: string
+  startedAt?: string
+  endedAt?: string
+  durationMs?: number
+  actionItemCount?: number
+}
+
+export interface MeetingDetail extends MeetingSummary {
+  transcript: string
+  notes: string
+  actionItems: MeetingActionItem[]
 }
 
 export const JobDescriptionRequestSchema = z.object({
@@ -563,6 +641,8 @@ export interface ModeResultEvent {
   evidenceLevel?: 'none' | 'partial' | 'good'
   contextUsed: ModeContextUsed[]
   message?: string
+  /** Provider-reported token usage when the provider supplies it. */
+  usage?: { inputTokens: number | null; outputTokens: number | null }
 }
 
 export interface ModeErrorEvent {
@@ -626,6 +706,14 @@ export const AppSettingsSchema = z.object({
   activeProviderId: z.string().min(1).max(64).nullable().default(null),
   theme: z.enum(['dark', 'light']).default('dark'),
   responseMode: z.enum(['concise', 'detailed']).default('concise'),
+  /**
+   * Response language shared by transcription + AI generation. 'auto' means
+   * no forced language: transcription uses the STT provider's configured
+   * language and the model mirrors the question's language.
+   */
+  responseLanguage: z.string().min(2).max(24).default('auto'),
+  /** Active personal profile: facts and retrieval are scoped to it. */
+  activeProfileId: z.string().min(1).max(64).default('default'),
   context: ContextSettingsSchema.default({
     totalTokenBudget: 1_200,
     perSourceCharBudget: 1_200,
@@ -668,6 +756,140 @@ export interface ProviderTestResult {
   latencyMs: number | null
 }
 
+/* ─── Transformation: personal profiles ─────────────────────────────────── */
+
+export interface ProfileInfo {
+  profileId: string
+  name: string
+  factCount: number
+  createdAt: string
+  updatedAt: string
+}
+
+export const ProfileCreateRequestSchema = z.object({
+  name: z.string().min(1).max(80)
+})
+export const ProfileRenameRequestSchema = z.object({
+  profileId: z.string().min(1).max(64),
+  name: z.string().min(1).max(80)
+})
+export const ProfileIdRequestSchema = z.object({
+  profileId: z.string().min(1).max(64)
+})
+
+/* ─── Transformation: practice interviews (Module K) ────────────────────── */
+
+export const PracticeTypeSchema = z.enum([
+  'behavioral',
+  'technical',
+  'software-engineering',
+  'coding',
+  'system-design',
+  'ai-evaluation',
+  'custom'
+])
+export type PracticeType = z.infer<typeof PracticeTypeSchema>
+
+export const PracticeDifficultySchema = z.enum(['easy', 'medium', 'hard'])
+export type PracticeDifficulty = z.infer<typeof PracticeDifficultySchema>
+
+export const PracticeStartRequestSchema = z.object({
+  type: PracticeTypeSchema,
+  difficulty: PracticeDifficultySchema.default('medium'),
+  /** Number of questions for the whole session (2–10). */
+  questionCount: z.number().int().min(2).max(10).default(5),
+  /** Optional job description grounding; never used to invent experience. */
+  jobDescription: z.string().max(8_000).default(''),
+  /** Custom interview focus when type === 'custom'. */
+  customFocus: z.string().max(500).default(''),
+  /** Optional role label for context. */
+  role: z.string().max(200).default(''),
+  /** Active profile id — the session retrieves facts from this profile. */
+  profileId: z.string().min(1).max(64).default('default')
+})
+
+export const PracticeSubmitRequestSchema = z.object({
+  practiceId: z.string().min(1).max(64),
+  answer: z.string().max(100_000),
+  spoken: z.boolean().default(false)
+})
+
+export const PracticeIdRequestSchema = z.object({
+  practiceId: z.string().min(1).max(64)
+})
+
+/** One scored dimension of a practice answer. */
+export interface PracticeDimensionScore {
+  dimension: string
+  score: number
+  comment: string
+}
+
+/** Rubric feedback for a single practice answer (explicit + explainable). */
+export interface PracticeFeedback {
+  overall: number
+  dimensions: PracticeDimensionScore[]
+  strengths: string[]
+  improvements: string[]
+  /** A better version of the answer grounded ONLY in what the user said. */
+  improvedAnswer: string
+}
+
+export interface PracticeTurn {
+  index: number
+  question: string
+  answer: string
+  /** Present once the answer has been evaluated. */
+  feedback?: PracticeFeedback
+  spoken: boolean
+}
+
+export interface PracticeScorecard {
+  overall: number
+  communication: number
+  technicalAccuracy: number
+  relevance: number
+  completeness: number
+  problemSolving: number
+  summary: string
+  areasForImprovement: string[]
+}
+
+export interface PracticeSessionInfo {
+  practiceId: string
+  type: PracticeType
+  difficulty: PracticeDifficulty
+  questionCount: number
+  status: 'active' | 'completed' | 'cancelled'
+  role: string
+  createdAt: string
+  updatedAt: string
+  /** Populated when status === 'completed'. */
+  scorecard?: PracticeScorecard
+}
+
+export interface PracticeDetail extends PracticeSessionInfo {
+  jobDescription: string
+  turns: PracticeTurn[]
+}
+
+export interface PracticeQuestionEvent {
+  practiceId: string
+  index: number
+  question: string
+}
+
+export interface PracticeEvaluatedEvent {
+  practiceId: string
+  index: number
+  feedback: PracticeFeedback
+}
+
+export interface PracticeFinishedEvent {
+  practiceId: string
+  scorecard: PracticeScorecard
+}
+
 /** Window into the main process exposed on window.copilot by the preload. */
 export interface CopilotApi {
   getSettings(): Promise<AppSettings>
@@ -679,7 +901,10 @@ export interface CopilotApi {
   sendChat(req: ChatSendRequest): void
   cancelChat(requestId: string): void
   togglePin(): Promise<boolean>
-  prepareTranscript(source: TranscriptSource): Promise<z.infer<typeof TranscriptPrepareResultSchema>>
+  prepareTranscript(
+    source: TranscriptSource,
+    purpose?: SessionPurpose
+  ): Promise<z.infer<typeof TranscriptPrepareResultSchema>>
   beginTranscript(sessionId: string): void
   sendAudioChunk(sessionId: string, seq: number, b64: string): void
   pauseTranscript(sessionId: string): void
@@ -712,14 +937,10 @@ export interface CopilotApi {
   removeDocument(sourceId: string): Promise<{ ok: boolean }>
   setJobDescription(text: string): Promise<{ ok: boolean; message?: string }>
   listMeetings(): Promise<{ meetings: MeetingSummary[] }>
+  searchMeetings(query: string): Promise<{ meetings: MeetingSummary[] }>
   saveMeeting(req: z.infer<typeof MeetingSaveRequestSchema>): Promise<{ ok: boolean; message?: string }>
   deleteMeeting(meetingId: string): Promise<{ ok: boolean }>
-  getMeeting(meetingId: string): Promise<{ ok: boolean; transcript: string; notes: string; title: string } | undefined>
-  setJobDescription(text: string): Promise<{ ok: boolean; message?: string }>
-  listMeetings(): Promise<{ meetings: MeetingSummary[] }>
-  saveMeeting(req: z.infer<typeof MeetingSaveRequestSchema>): Promise<{ ok: boolean; message?: string }>
-  deleteMeeting(meetingId: string): Promise<{ ok: boolean }>
-  getMeeting(meetingId: string): Promise<{ ok: boolean; transcript: string; notes: string; title: string } | undefined>
+  getMeeting(meetingId: string): Promise<MeetingDetail | undefined>
   previewContext(req: { question: string; options?: ContextOptions }): Promise<{
     items: RetrievedItem[]
     estimatedTokens: number
@@ -729,10 +950,6 @@ export interface CopilotApi {
   persistenceStatus(): Promise<ContextPersistenceStatus>
   backupNow(): Promise<{ ok: boolean; message?: string }>
   restoreBackup(): Promise<{ ok: boolean; message?: string }>
-  listMeetings(): Promise<{ meetings: MeetingSummary[] }>
-  saveMeeting(req: z.infer<typeof MeetingSaveRequestSchema>): Promise<{ ok: boolean; message?: string }>
-  deleteMeeting(meetingId: string): Promise<{ ok: boolean }>
-  getMeeting(meetingId: string): Promise<{ ok: boolean; title: string; transcript: string; notes: string }>
   answerInterview(req: z.infer<typeof InterviewAnswerRequestSchema>): Promise<{ ok: boolean; requestId?: string; message?: string }>
   refineInterview(req: z.infer<typeof InterviewRefineRequestSchema>): Promise<{ ok: boolean; requestId?: string; message?: string }>
   cancelInterview(): void
@@ -748,4 +965,24 @@ export interface CopilotApi {
   onChatChunk(cb: (e: ChatChunkEvent) => void): () => void
   onChatDone(cb: (e: { requestId: string }) => void): () => void
   onChatError(cb: (e: z.infer<typeof ChatErrorEventSchema>) => void): () => void
+  /* profiles */
+  listProfiles(): Promise<{ profiles: ProfileInfo[] }>
+  createProfile(req: z.infer<typeof ProfileCreateRequestSchema>): Promise<{ ok: boolean; profileId?: string; message?: string }>
+  renameProfile(req: z.infer<typeof ProfileRenameRequestSchema>): Promise<{ ok: boolean; message?: string }>
+  deleteProfile(req: z.infer<typeof ProfileIdRequestSchema>): Promise<{ ok: boolean; message?: string }>
+  /* practice */
+  practiceStart(
+    req: z.infer<typeof PracticeStartRequestSchema>
+  ): Promise<{ ok: boolean; practiceId?: string; message?: string }>
+  practiceSubmit(req: { practiceId: string; answer: string; spoken: boolean }): Promise<{ ok: boolean; message?: string }>
+  practiceEnd(req: { practiceId: string }): Promise<{ ok: boolean; message?: string }>
+  practiceCancel(req: { practiceId: string }): Promise<{ ok: boolean; message?: string }>
+  listPractice(): Promise<{ sessions: PracticeSessionInfo[] }>
+  getPractice(practiceId: string): Promise<PracticeDetail | undefined>
+  deletePractice(practiceId: string): Promise<{ ok: boolean }>
+  onPracticeQuestion(cb: (e: PracticeQuestionEvent) => void): () => void
+  onPracticeEvaluated(cb: (e: PracticeEvaluatedEvent) => void): () => void
+  onPracticeFinished(cb: (e: PracticeFinishedEvent) => void): () => void
+  onPracticeDelta(cb: (e: { practiceId: string; requestId: string; kind: 'question' | 'eval' | 'scorecard'; delta: string }) => void): () => void
+  onPracticeError(cb: (e: { practiceId: string; requestId: string; message: string }) => void): () => void
 }

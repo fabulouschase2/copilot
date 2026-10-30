@@ -30,7 +30,8 @@ const FACT = {
   category: 'preference' as const,
   origin: 'user' as const,
   createdAt: '2026-01-01T00:00:00.000Z',
-  updatedAt: '2026-01-01T00:00:00.000Z'
+  updatedAt: '2026-01-01T00:00:00.000Z',
+  profileId: 'default'
 }
 
 afterEach(() => {

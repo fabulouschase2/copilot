@@ -57,6 +57,8 @@ export interface ScreenDeps {
   /** Resolves a vision-capable provider; null when none is configured/enabled. */
   resolveVision: () => { provider: AIProvider; model: string; id: string; label: string } | null
   getRecentTranscript: () => Array<{ segmentId: string; seq: number; text: string }>
+  /** Active session id, so screen observations are scoped to their session. */
+  getSessionId?: () => string | null
   context: ContextEngine
   /** Consent gate for screen analysis (longer TTL than capture-permission). */
   armGate: PermissionGate
@@ -280,7 +282,8 @@ export class ScreenService {
           id: requestId,
           kind: 'screen',
           text: `Screen analysis — Q: ${req.question}\nA: ${observations.trim()}`,
-          timestamp: Date.now()
+          timestamp: Date.now(),
+          sessionId: this.deps.getSessionId?.() ?? undefined
         })
       }
       finish('completed', observations)

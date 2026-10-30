@@ -54,11 +54,11 @@ export function createMainWindow(): BrowserWindow {
 
   const saved = loadBounds()
   mainWindow = new BrowserWindow({
-    width: saved?.width ?? 420,
-    height: saved?.height ?? 680,
+    width: saved?.width ?? 460,
+    height: saved?.height ?? 660,
     ...(saved?.x !== undefined && saved?.y !== undefined ? { x: saved.x, y: saved.y } : {}),
-    minWidth: 320,
-    minHeight: 420,
+    minWidth: 340,
+    minHeight: 460,
     title: 'Copilot',
     backgroundColor: '#111318',
     autoHideMenuBar: true,

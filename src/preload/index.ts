@@ -20,8 +20,14 @@ import {
   MeetingGenerateRequestSchema,
   ModeQuestion,
   NotesExportRequestSchema,
+  PracticeIdRequestSchema,
+  PracticeStartRequestSchema,
+  PracticeSubmitRequestSchema,
+  ProfileCreateRequestSchema,
+  ProfileIdRequestSchema,
   ProfileFactOp,
   ProfileFactOpSchema,
+  ProfileRenameRequestSchema,
   ProviderInfo,
   ProviderTestResult,
   ScreenAnalysisResult,
@@ -36,6 +42,7 @@ import {
   MeetingSaveRequestSchema,
   ScreenSourcesRequestSchema,
   ScreenStatusEvent,
+  SessionPurpose,
   TranscriptErrorEvent,
   TranscriptMetricsEvent,
   TranscriptPartialEvent,
@@ -59,8 +66,8 @@ const api: CopilotApi = {
   sendChat: (req: ChatSendRequest): void => ipcRenderer.send(IPC.chatSend, req),
   cancelChat: (requestId: string): void => ipcRenderer.send(IPC.chatCancel, requestId),
   togglePin: (): Promise<boolean> => ipcRenderer.invoke(IPC.windowTogglePin),
-  prepareTranscript: (source: TranscriptSource) =>
-    ipcRenderer.invoke(IPC.transcriptPrepare, TranscriptPrepareRequestSchema.parse({ source })),
+  prepareTranscript: (source: TranscriptSource, purpose: SessionPurpose = 'interview') =>
+    ipcRenderer.invoke(IPC.transcriptPrepare, TranscriptPrepareRequestSchema.parse({ source, purpose })),
   beginTranscript: (sessionId: string): void => ipcRenderer.send(IPC.transcriptBegin, { sessionId }),
   sendAudioChunk: (sessionId: string, seq: number, b64: string): void =>
     ipcRenderer.send(IPC.transcriptAudio, { sessionId, seq, b64 }),
@@ -126,6 +133,38 @@ const api: CopilotApi = {
   onModeResult: (cb: (e: import('../shared/protocol').ModeResultEvent) => void) => on(IPC.modeResult, cb),
   onModeError: (cb: (e: { channel: string; requestId: string; message: string }) => void) => on(IPC.modeError, cb),
   onModeQuestion: (cb: (e: ModeQuestion) => void) => on(IPC.modeQuestion, cb),
+
+  /* profiles (transformation) */
+  listProfiles: () => ipcRenderer.invoke(IPC.profilesList),
+  createProfile: (req: z.infer<typeof ProfileCreateRequestSchema>) =>
+    ipcRenderer.invoke(IPC.profilesCreate, ProfileCreateRequestSchema.parse(req)),
+  renameProfile: (req: z.infer<typeof ProfileRenameRequestSchema>) =>
+    ipcRenderer.invoke(IPC.profilesRename, ProfileRenameRequestSchema.parse(req)),
+  deleteProfile: (req: z.infer<typeof ProfileIdRequestSchema>) =>
+    ipcRenderer.invoke(IPC.profilesDelete, ProfileIdRequestSchema.parse(req)),
+
+  /* meetings search (transformation) */
+  searchMeetings: (query: string) => ipcRenderer.invoke(IPC.meetingsSearch, { query: String(query).slice(0, 200) }),
+
+  /* practice (transformation) */
+  practiceStart: (req: z.infer<typeof PracticeStartRequestSchema>) =>
+    ipcRenderer.invoke(IPC.practiceStart, PracticeStartRequestSchema.parse(req)),
+  practiceSubmit: (req: z.infer<typeof PracticeSubmitRequestSchema>) =>
+    ipcRenderer.invoke(IPC.practiceSubmit, PracticeSubmitRequestSchema.parse(req)),
+  practiceEnd: (req: z.infer<typeof PracticeIdRequestSchema>) =>
+    ipcRenderer.invoke(IPC.practiceEnd, PracticeIdRequestSchema.parse(req)),
+  practiceCancel: (req: z.infer<typeof PracticeIdRequestSchema>) =>
+    ipcRenderer.invoke(IPC.practiceCancel, PracticeIdRequestSchema.parse(req)),
+  listPractice: () => ipcRenderer.invoke(IPC.practiceList),
+  getPractice: (practiceId: string) => ipcRenderer.invoke(IPC.practiceGet, PracticeIdRequestSchema.parse({ practiceId })),
+  deletePractice: (practiceId: string) =>
+    ipcRenderer.invoke(IPC.practiceDelete, PracticeIdRequestSchema.parse({ practiceId })),
+  onPracticeQuestion: (cb: (e: import('../shared/protocol').PracticeQuestionEvent) => void) => on(IPC.practiceQuestion, cb),
+  onPracticeEvaluated: (cb: (e: import('../shared/protocol').PracticeEvaluatedEvent) => void) => on(IPC.practiceEvaluated, cb),
+  onPracticeFinished: (cb: (e: import('../shared/protocol').PracticeFinishedEvent) => void) => on(IPC.practiceFinished, cb),
+  onPracticeDelta: (cb: (e: { practiceId: string; requestId: string; kind: 'question' | 'eval' | 'scorecard'; delta: string }) => void) =>
+    on(IPC.practiceDelta, cb),
+  onPracticeError: (cb: (e: { practiceId: string; requestId: string; message: string }) => void) => on(IPC.practiceError, cb),
 
   onChatChunk: (cb: (e: ChatChunkEvent) => void) => {
     const listener = (_e: unknown, payload: ChatChunkEvent): void => cb(payload)

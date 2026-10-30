@@ -3,16 +3,35 @@ import {
   AppSettings,
   ContextSourceInfo,
   ProfileCategory,
+  ProfileInfo,
   ProviderInfo
 } from '../../shared/protocol'
 import { SetupProvidersInline, SetupSttInline } from './SetupProvidersInline'
 
 /**
- * Setup — the real configuration screen (Stage 10 UI rebuild).
- * Groups: Profile · Resume & documents · Interview context · Listening ·
- * Response · Providers (chat + transcription) · Data storage.
+ * Settings — configuration surface (transformation rebuild).
+ * Groups: Profiles · Profile & background · Résumé & documents ·
+ * Interview context · Response & listening · Providers · Data.
  * Every control writes real state through the existing IPC/services.
  */
+
+const LANGUAGES: Array<{ id: string; label: string }> = [
+  { id: 'auto', label: 'Auto (match question)' },
+  { id: 'en', label: 'English' },
+  { id: 'de', label: 'German (Deutsch)' },
+  { id: 'fr', label: 'French (Français)' },
+  { id: 'es', label: 'Spanish (Español)' },
+  { id: 'pt', label: 'Portuguese (Português)' },
+  { id: 'it', label: 'Italian (Italiano)' },
+  { id: 'nl', label: 'Dutch (Nederlands)' },
+  { id: 'pl', label: 'Polish (Polski)' },
+  { id: 'tr', label: 'Turkish (Türkçe)' },
+  { id: 'hi', label: 'Hindi (हिन्दी)' },
+  { id: 'zh', label: 'Chinese (中文)' },
+  { id: 'ja', label: 'Japanese (日本語)' },
+  { id: 'ko', label: 'Korean (한국어)' }
+]
+
 export function SetupPanel(props: {
   settings: AppSettings
   onChange: (s: AppSettings) => void
@@ -21,9 +40,11 @@ export function SetupPanel(props: {
   const { settings, onChange } = props
   const [sources, setSources] = useState<ContextSourceInfo[]>([])
   const [providers, setProviders] = useState<ProviderInfo[]>([])
+  const [profiles, setProfiles] = useState<ProfileInfo[]>([])
   const [importErrors, setImportErrors] = useState<string[]>([])
   const [factText, setFactText] = useState('')
   const [factCategory, setFactCategory] = useState<ProfileCategory>('background')
+  const [newProfileName, setNewProfileName] = useState('')
   const [jd, setJd] = useState('')
   const [persistMsg, setPersistMsg] = useState<string | null>(null)
   const [persistence, setPersistence] = useState<import('../../shared/protocol').ContextPersistenceStatus | null>(null)
@@ -37,6 +58,7 @@ export function SetupPanel(props: {
       setJd(jdDoc ? jdDoc.preview : '')
     })
     void window.copilot.listProviders().then(setProviders)
+    void window.copilot.listProfiles().then((res) => setProfiles(res.profiles))
     void window.copilot.persistenceStatus().then(setPersistence)
   }
 
@@ -46,6 +68,7 @@ export function SetupPanel(props: {
 
   const documents = sources.filter((s) => s.type === 'document')
   const facts = sources.filter((s) => s.type === 'profile')
+  const activeProfile = profiles.find((p) => p.profileId === settings.activeProfileId)
 
   const importDocs = async (): Promise<void> => {
     setImportErrors([])
@@ -65,11 +88,25 @@ export function SetupPanel(props: {
   const saveJd = async (): Promise<void> => {
     // The job description persists as a dedicated ranked document.
     await window.copilot.removeDocument('job-description')
-    if (jd.trim()) {
-      // Route through the profile-op store? It must rank as a document, so
-      // save via the document pipeline using the dedicated id.
-      await window.copilot.setJobDescription(jd.trim())
+    if (jd.trim()) await window.copilot.setJobDescription(jd.trim())
+    refresh()
+  }
+
+  const createProfile = async (): Promise<void> => {
+    if (!newProfileName.trim()) return
+    const res = await window.copilot.createProfile({ name: newProfileName.trim() })
+    if (res.ok && res.profileId) {
+      save({ ...settings, activeProfileId: res.profileId })
+      setNewProfileName('')
+    } else {
+      setPersistMsg(res.message ?? 'Could not create the profile.')
     }
+    refresh()
+  }
+
+  const deleteProfile = async (profileId: string): Promise<void> => {
+    const res = await window.copilot.deleteProfile({ profileId })
+    if (!res.ok) setPersistMsg(res.message ?? 'Could not delete the profile.')
     refresh()
   }
 
@@ -97,6 +134,44 @@ export function SetupPanel(props: {
 
       {section === 'profile' && (
         <>
+          <div className="card">
+            <div className="section-title">Personal profiles</div>
+            <div className="profile-picker">
+              {profiles.map((p) => (
+                <span key={p.profileId} className="row" style={{ gap: 2 }}>
+                  <button
+                    className={`chip ${settings.activeProfileId === p.profileId ? 'chip-active' : ''}`}
+                    onClick={() => save({ ...settings, activeProfileId: p.profileId })}
+                    title={settings.activeProfileId === p.profileId ? 'Active profile' : 'Switch to this profile'}
+                  >
+                    {p.name} ({p.factCount})
+                  </button>
+                  {p.profileId !== 'default' && (
+                    <button className="meta-btn" title="Delete this profile and its facts" onClick={() => void deleteProfile(p.profileId)}>
+                      ✕
+                    </button>
+                  )}
+                </span>
+              ))}
+            </div>
+            <div className="row">
+              <input
+                className="grow"
+                type="text"
+                placeholder="New profile name (e.g. Frontend track, Consulting)"
+                value={newProfileName}
+                onChange={(e) => setNewProfileName(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && void createProfile()}
+              />
+              <button className="secondary" disabled={!newProfileName.trim()} onClick={() => void createProfile()}>
+                Create
+              </button>
+            </div>
+            <div className="hint">
+              Facts below belong to the active profile{activeProfile ? `: ${activeProfile.name}` : ''}. Documents are shared across profiles.
+            </div>
+          </div>
+
           <div className="card">
             <div className="section-title">Interview context (this interview)</div>
             <div className="row">
@@ -170,7 +245,7 @@ export function SetupPanel(props: {
           </div>
 
           <div className="card">
-            <div className="section-title">Resume & documents</div>
+            <div className="section-title">Résumé & documents</div>
             <div className="row">
               <button className="primary" onClick={() => void importDocs().then(refresh)}>
                 Import PDF / TXT / MD…
@@ -195,14 +270,19 @@ export function SetupPanel(props: {
           <div className="card">
             <div className="section-title">Response & listening</div>
             <div className="row">
-              <label>Response</label>
+              <label>Response language</label>
               <select
-                value={settings.responseMode}
-                onChange={(e) => save({ ...settings, responseMode: e.target.value as 'concise' | 'detailed' })}
+                value={settings.responseLanguage}
+                onChange={(e) => save({ ...settings, responseLanguage: e.target.value })}
               >
-                <option value="concise">Concise</option>
-                <option value="detailed">Detailed</option>
+                {LANGUAGES.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.label}
+                  </option>
+                ))}
               </select>
+            </div>
+            <div className="row">
               <label>Answer delay</label>
               <select
                 value={String(settings.interview.delaySeconds)}
@@ -261,19 +341,9 @@ export function SetupPanel(props: {
               )}
             </div>
             <div className="hint">
-              Wait-before-answering applies when a question is detected while listening; the countdown resets if speech
-              continues.
-            </div>
-          </div>
-
-          <div className="card">
-            <div className="section-title">Appearance</div>
-            <div className="row">
-              <label>Theme</label>
-              <select value={settings.theme} onChange={(e) => save({ ...settings, theme: e.target.value as 'dark' | 'light' })}>
-                <option value="dark">Dark</option>
-                <option value="light">Light</option>
-              </select>
+              Response language applies to interview answers, meeting notes, chat, and practice. The transcription
+              language above configures the STT provider. Wait-before-answering applies when a question is detected
+              while listening.
             </div>
           </div>
         </>
@@ -316,7 +386,7 @@ export function SetupPanel(props: {
           <div className="card">
             <div className="section-title">Provider management</div>
             <div className="hint">
-              Add, remove, and switch providers in the full provider list below (kept from the previous settings view).
+              Add, remove, and switch providers below. Keys are OS-encrypted and never leave the main process.
             </div>
             <ProviderEditor settings={settings} onChange={save} />
           </div>
@@ -353,8 +423,8 @@ export function SetupPanel(props: {
             <div className="section-title">Privacy</div>
             <div className="hint">
               Everything is stored locally. Documents, profile facts, and the job description are sent only to the
-              provider you configure, only when you trigger an action. Transcripts and screen observations are never
-              persisted. Free API tiers may retain submitted content — avoid confidential material.
+              provider you configure, only when you trigger an action. Transcripts, audio, and screen observations are
+              never persisted. Free API tiers may retain submitted content — avoid confidential material.
             </div>
           </div>
         </>
@@ -413,4 +483,3 @@ function ProviderEditor(props: { settings: AppSettings; onChange: (s: AppSetting
     </>
   )
 }
-

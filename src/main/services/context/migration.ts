@@ -93,7 +93,8 @@ export function migrateLegacyJson(sqlite: SQLiteStore, legacyPath: string): Migr
       f.origin === 'user' &&
       typeof f?.createdAt === 'string' && typeof f?.updatedAt === 'string'
     ) {
-      facts.push(f as ProfileFactRecord)
+      // Legacy facts predate profiles; they belong to the default profile.
+      facts.push({ ...(f as ProfileFactRecord), profileId: f.profileId ?? 'default' })
     } else skipped += 1
   }
   const excludedSources = Array.isArray(data.excludedSourceIds)

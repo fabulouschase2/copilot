@@ -8,38 +8,48 @@ import {
   TranscriptStatusEvent
 } from '../../shared/protocol'
 import { renderAnswer } from './answerRender'
-
-const STYLES: Array<{ id: AnswerStyle; label: string }> = [
-  { id: 'star', label: 'Behavioral' },
-  { id: 'coding', label: 'Coding' },
-  { id: 'research', label: 'Research' },
-  { id: 'concise', label: 'Concise' },
-  { id: 'detailed', label: 'Detailed' },
-  { id: 'technical', label: 'Technical' }
-]
+import { ErrorBox, NoticeBox } from './ui'
 
 /**
  * Interview view — the primary workflow:
- * Interviewer (recognized/typed question) → Your Answer (streamed, refineable).
- * Lifecycle: Idle → Start interview → Listening → Question detected →
- * waiting (configured delay) → Generating → Displayed.
+ * session controls → Interviewer (recognized/typed question, live transcript)
+ * → Your Answer (streamed, refineable). Modes are grouped Research /
+ * Behavioral / Coding; answer length is a separate control. Everything here
+ * reuses the existing answer-generation services and IPC contracts.
  */
+
+const MODES: Array<{ id: AnswerStyle; label: string; group: string }> = [
+  { id: 'research', label: 'Research', group: 'Research' },
+  { id: 'star', label: 'Behavioral (STAR)', group: 'Behavioral' },
+  { id: 'coding', label: 'Coding', group: 'Coding' },
+  { id: 'technical', label: 'Technical', group: 'More' },
+  { id: 'concise', label: 'Concise', group: 'More' },
+  { id: 'detailed', label: 'Detailed', group: 'More' }
+]
+
+interface Segment {
+  id: string
+  text: string
+  wallTime: string
+}
+
 export function InterviewPanel(props: {
   settings: AppSettings
-  screenTrigger: number
+  onOpenScreenRead: () => void
 }): React.JSX.Element {
-  const { settings, screenTrigger } = props
+  const { settings, onOpenScreenRead } = props
   const iv: InterviewSettings = settings.interview
 
   const [status, setStatus] = useState<TranscriptStatusEvent | null>(null)
   const [question, setQuestion] = useState('')
   const [answer, setAnswer] = useState('')
-  const [style, setStyle] = useState<AnswerStyle>('star')
+  const [mode, setMode] = useState<AnswerStyle>('star')
+  const [detail, setDetail] = useState<'concise' | 'detailed'>('concise')
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<ModeResultEvent | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  const [segments, setSegments] = useState<Array<{ id: string; text: string }>>([])
+  const [segments, setSegments] = useState<Segment[]>([])
   const [showTranscript, setShowTranscript] = useState(false)
   const [countdown, setCountdown] = useState<number | null>(null)
 
@@ -69,17 +79,23 @@ export function InterviewPanel(props: {
     const offStatus = window.copilot.onTranscriptStatus((e) => {
       if (sessionIdRef.current === e.sessionId || e.state === 'stopped') setStatus(e)
     })
+    const offTrigger = window.copilot.onAppTrigger((e) => {
+      if (e.action === 'end-session') endInterviewRef.current()
+      if (e.action === 'read-screen') onOpenScreenRead()
+    })
     return () => {
       offDelta()
       offResult()
       offError()
       offStatus()
+      offTrigger()
     }
-  }, [])
+  }, [onOpenScreenRead])
 
   useEffect(() => {
     return window.copilot.onTranscriptSegment((e) => {
-      setSegments((prev) => [{ id: e.segmentId, text: e.text }, ...prev].slice(0, 30))
+      if (e.purpose !== 'interview') return
+      setSegments((prev) => [{ id: e.segmentId, text: e.text, wallTime: e.wallTime }, ...prev].slice(0, 30))
     })
   }, [])
 
@@ -104,14 +120,14 @@ export function InterviewPanel(props: {
       setAnswer('')
       setResult(null)
       setBusy(true)
-      const res = await window.copilot.answerInterview({ question: q, style, includeSession: listening })
+      const res = await window.copilot.answerInterview({ question: q, style: mode, detail, includeSession: listening })
       if (res.ok && res.requestId) requestIdRef.current = res.requestId
       else {
         setError(res.message ?? 'Could not start generation.')
         setBusy(false)
       }
     },
-    [busy, style, listening, cancelAutoAnswer]
+    [busy, mode, detail, listening, cancelAutoAnswer]
   )
   generateRef.current = generate
 
@@ -151,11 +167,11 @@ export function InterviewPanel(props: {
   /* ── session lifecycle ──────────────────────────────────────────────── */
   const startInterview = useCallback(async (): Promise<void> => {
     setError(null)
-    const prepared = await window.copilot.prepareTranscript(iv.source)
+    const prepared = await window.copilot.prepareTranscript(iv.source, 'interview')
     if (!prepared.ok || !prepared.sessionId) {
       setError(
         prepared.message ??
-          'Live listening needs a transcription provider (Setup → Listening). You can still type questions manually.'
+          'Live listening needs a transcription provider (Settings → Listening). You can still type questions manually.'
       )
       return
     }
@@ -170,7 +186,10 @@ export function InterviewPanel(props: {
     sessionIdRef.current = null
     setStatus(null)
     setSegments([])
+    setShowTranscript(false)
   }, [cancelAutoAnswer])
+  const endInterviewRef = useRef(endInterview)
+  endInterviewRef.current = endInterview
 
   /* ── detected questions: fill Interviewer + optional auto-answer ────── */
   useEffect(() => {
@@ -193,46 +212,7 @@ export function InterviewPanel(props: {
 
   useEffect(() => () => cancelAutoAnswer(), [cancelAutoAnswer])
 
-  /* ── screen read (header button / global shortcut) ───────────────────── */
-  const readScreenRef = useRef<() => Promise<void>>(async () => undefined)
-  const readScreen = useCallback(async (): Promise<void> => {
-    if (busy) return
-    setError(null)
-    setNotice(null)
-    setAnswer('')
-    setResult(null)
-    setBusy(true)
-    await window.copilot.armScreen(true)
-    const res = await window.copilot.analyzeScreen({
-      kind: 'screen',
-      question: `Read the visible screen for interview context. If an interview or coding question is visible, state it verbatim, then answer it in ${
-        style === 'coding' ? 'working code with complexity' : 'a concise, structured way'
-      }.`,
-      includeTranscript: false,
-      includeContext: true
-    })
-    if (res.ok && res.requestId) {
-      requestIdRef.current = res.requestId
-      setNotice('Screen read running — the capture window is visible.')
-    } else {
-      setError(res.message ?? 'Screen read failed.')
-      setBusy(false)
-    }
-  }, [busy, style])
-  readScreenRef.current = readScreen
-
-  useEffect(() => {
-    if (screenTrigger > 0) void readScreenRef.current()
-  }, [screenTrigger])
-
-  /* ── triggers + in-app shortcut registry ────────────────────────────── */
-  useEffect(() => {
-    return window.copilot.onAppTrigger((e) => {
-      if (e.action === 'read-screen') void readScreenRef.current()
-      if (e.action === 'end-session') endInterview()
-    })
-  }, [endInterview])
-
+  /* ── keyboard shortcuts (registry-verified in-app chords) ───────────── */
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       const parts: string[] = []
@@ -272,15 +252,17 @@ export function InterviewPanel(props: {
     : status?.state === 'paused'
       ? 'Interview · Paused'
       : inSession
-        ? 'Interview'
+        ? 'Interview session'
         : 'Idle'
 
+  const groupLabel = mode === 'research' ? 'Research' : mode === 'star' ? 'Behavioral' : mode === 'coding' ? 'Coding' : 'More'
+
   return (
-    <div className="iv2">
-      <div className="iv2-session">
+    <>
+      <div className="iv-session">
         <span className={`dot ${listening ? 'rec' : ''}`} />
-        <span className="iv2-status">{statusLabel}</span>
-        {countdown !== null && <span className="badge ok">Answering in {countdown}s…</span>}
+        <span className="iv-status">{statusLabel}</span>
+        {countdown !== null && <span className="badge accent">Answering in {countdown}s…</span>}
         <span className="grow" />
         {inSession ? (
           <button className="chip" onClick={endInterview}>
@@ -288,24 +270,24 @@ export function InterviewPanel(props: {
           </button>
         ) : (
           <button className="chip" onClick={() => void startInterview()}>
-            Start interview
+            ▶ Start interview
           </button>
         )}
       </div>
 
-      <div className="iv2-section">
-        <div className="iv2-label">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div className="iv-label">
           Interviewer
           {segments.length > 0 && (
             <button className="meta-btn" onClick={() => setShowTranscript((v) => !v)}>
-              {showTranscript ? 'hide transcript' : `transcript (${segments.length})`}
+              {showTranscript ? 'hide transcript' : `live transcript (${segments.length})`}
             </button>
           )}
         </div>
         <textarea
-          className="iv2-question"
+          className="iv-question"
           value={question}
-          placeholder="Recognized questions appear here — or type one."
+          placeholder="Recognized questions appear here — or type one (Ctrl+Enter to answer)."
           onChange={(e) => {
             setQuestion(e.target.value)
             cancelAutoAnswer()
@@ -318,16 +300,17 @@ export function InterviewPanel(props: {
           }}
         />
         {showTranscript && (
-          <div className="iv2-transcript">
+          <div className="iv-transcript">
             {segments.length === 0 && <div className="hint">No transcript yet in this session.</div>}
             {segments.map((s) => (
-              <button key={s.id} className="iv2-seg" onClick={() => setQuestion(s.text)} title="Use as question">
+              <button key={s.id} className="iv-seg" onClick={() => { setQuestion(s.text); cancelAutoAnswer() }} title="Use as question">
+                <span className="seg-time">{new Date(s.wallTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
                 {s.text}
               </button>
             ))}
           </div>
         )}
-        <div className="iv2-actions">
+        <div className="row">
           {busy ? (
             <button className="primary" onClick={stop}>
               ■ Stop
@@ -337,35 +320,41 @@ export function InterviewPanel(props: {
               Answer now
             </button>
           )}
-          <button className="chip" onClick={clearQA} disabled={!question && !answer}>
+          <button className="ghost" onClick={clearQA} disabled={!question && !answer}>
             Clear
           </button>
           <span className="grow" />
-          {listening && iv.autoAnswer && countdown === null && (
-            <span className="hint">Auto-answer after {iv.delaySeconds}s pause</span>
-          )}
+          <button className="chip" onClick={onOpenScreenRead} title="Read the current screen (Ctrl+Alt+R)">
+            🖥 Read screen
+          </button>
         </div>
+        {listening && iv.autoAnswer && countdown === null && (
+          <div className="hint">Auto-answer arms {iv.delaySeconds}s after a detected question finishes.</div>
+        )}
       </div>
 
-      <div className="iv2-section iv2-answer-section">
-        <div className="iv2-label">Your Answer</div>
-        {error && <div className="error-text iv2-error">{error}</div>}
-        {notice && <div className="hint">{notice}</div>}
-        <div className="iv2-answer" aria-live="polite">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div className="iv-label">Your Answer</div>
+        {error && <ErrorBox>{error}</ErrorBox>}
+        {notice && <NoticeBox>{notice}</NoticeBox>}
+        <div className="iv-answer" aria-live="polite">
           {answer ? (
-            renderAnswer(answer)
+            <>
+              {renderAnswer(answer)}
+              {busy && <span className="stream-cursor" />}
+            </>
           ) : busy ? (
             <span className="hint">Generating…</span>
           ) : result?.status === 'cancelled' ? (
             <span className="hint">Stopped.</span>
           ) : (
             <span className="hint">
-              The answer streams here. Coding answers keep code formatting; sources are listed below.
+              The answer streams here. Coding answers keep code formatting; sources used are listed below.
             </span>
           )}
         </div>
         {result && result.contextUsed.length > 0 && (
-          <div className="iv2-sources">
+          <div className="iv-sources">
             {result.contextUsed.map((c) => (
               <span key={c.sourceId} className="badge">
                 {c.displayName} {Math.round(c.score * 100)}%
@@ -374,15 +363,15 @@ export function InterviewPanel(props: {
           </div>
         )}
         {result && result.evidenceLevel && result.evidenceLevel !== 'good' && result.status === 'completed' && (
-          <div className="iv2-warning">
+          <div className="iv-warning">
             ⚠{' '}
             {result.evidenceLevel === 'none'
-              ? 'No supporting evidence in your resume/profile — general guidance, not your experience.'
-              : 'Limited supporting evidence — verify specific claims.'}
+              ? 'No supporting evidence in your resume/profile — this is general guidance, not your experience.'
+              : 'Limited supporting evidence — verify specific claims before relying on them.'}
           </div>
         )}
-        <div className="iv2-answer-actions">
-          <button className="chip" disabled={!answer} onClick={() => void navigator.clipboard.writeText(answer)}>
+        <div className="answer-meta">
+          <button className="chip" disabled={!answer} onClick={() => void navigator.clipboard.writeText(answer)} title="Ctrl+Shift+C">
             Copy
           </button>
           <button
@@ -404,21 +393,34 @@ export function InterviewPanel(props: {
           <button className="chip" disabled={busy || !question.trim()} onClick={() => void generate(question)}>
             Regenerate
           </button>
+          {result?.usage && (result.usage.inputTokens !== null || result.usage.outputTokens !== null) && (
+            <span className="badge">
+              ≈{[result.usage.inputTokens, result.usage.outputTokens].filter((n) => n !== null).join(' + ')} tokens
+            </span>
+          )}
         </div>
       </div>
 
-      <div className="iv2-styles">
-        {STYLES.map((s) => (
+      <div className="iv-styles">
+        <span className="style-group-label">Mode: {groupLabel}</span>
+        {MODES.map((s) => (
           <button
             key={s.id}
-            className={`pill ${style === s.id ? 'pill-active' : ''}`}
-            onClick={() => setStyle(s.id)}
+            className={`pill ${mode === s.id ? 'pill-active' : ''}`}
+            onClick={() => setMode(s.id)}
             disabled={busy}
           >
             {s.label}
           </button>
         ))}
+        <span className="style-group-label">Length</span>
+        <button className={`pill ${detail === 'concise' ? 'pill-active' : ''}`} onClick={() => setDetail('concise')} disabled={busy}>
+          Concise
+        </button>
+        <button className={`pill ${detail === 'detailed' ? 'pill-active' : ''}`} onClick={() => setDetail('detailed')} disabled={busy}>
+          Detailed
+        </button>
       </div>
-    </div>
+    </>
   )
 }

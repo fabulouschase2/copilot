@@ -40,23 +40,43 @@ const STYLE_INSTRUCTIONS: Record<AnswerStyle, string> = {
     'state assumptions. If the screen or transcript contains the actual problem, solve THAT problem exactly as written.'
 }
 
-export function interviewSystemPrompt(style: AnswerStyle, evidenceLevel: 'none' | 'partial' | 'good'): string {
+export function interviewSystemPrompt(
+  style: AnswerStyle,
+  evidenceLevel: 'none' | 'partial' | 'good',
+  detail: 'concise' | 'detailed' = 'concise',
+  responseLanguage = 'auto'
+): string {
   const evidenceNote =
     evidenceLevel === 'none'
       ? 'NOTE: no supporting evidence was found in the user\'s context. Prefer the missing-details path; do not stretch unrelated facts.'
       : evidenceLevel === 'partial'
         ? 'NOTE: supporting evidence is limited. Use it where it truly applies; be explicit when a point is not backed by the provided context.'
         : 'NOTE: supporting evidence is available; ground the answer in it and cite sources.'
+  const detailNote =
+    detail === 'concise'
+      ? 'LENGTH: keep the answer tight — lead with the substance, trim filler, hard maximum ~150 words unless code needs more.'
+      : 'LENGTH: a fuller answer is welcome — cover the strongest points with concrete supporting detail, still under ~300 words unless code needs more.'
   return [
     'You are an interview preparation copilot. You help the user PRACTICE and PREPARE answers; you never answer on their behalf in a live setting.',
     STYLE_INSTRUCTIONS[style],
+    detailNote,
     FABRICATION_PROHIBITION,
     evidenceNote,
+    responseLanguageNote(responseLanguage),
     UNTRUSTED_NOTE
-  ].join('\n\n')
+  ]
+    .filter((l) => l.length > 0)
+    .join('\n\n')
 }
 
-export function meetingSummaryPrompt(): string {
+/** 'auto' → no instruction (the model mirrors the question's language). */
+export function responseLanguageNote(responseLanguage: string): string {
+  const lang = responseLanguage.trim()
+  if (lang.length === 0 || lang.toLowerCase() === 'auto') return ''
+  return `LANGUAGE: write your response in ${lang}.`
+}
+
+export function meetingSummaryPrompt(responseLanguage = 'auto'): string {
   return [
     'You are a meeting notes copilot. Produce a CONCISE summary of the meeting from the provided transcript segments.',
     'Structure the output exactly as:',
@@ -69,26 +89,35 @@ export function meetingSummaryPrompt(): string {
     '## Uncertain / needs follow-up',
     'List ambiguous points, inaudible segments, and anything you interpreted rather than read directly.',
     'Separate what the transcript confirms from your interpretation. Do not invent participants, decisions, or numbers.',
+    responseLanguageNote(responseLanguage),
     UNTRUSTED_NOTE
-  ].join('\n')
+  ]
+    .filter((l) => l.length > 0)
+    .join('\n')
 }
 
-export function meetingActionsPrompt(): string {
+export function meetingActionsPrompt(responseLanguage = 'auto'): string {
   return [
     'You are a meeting notes copilot. Extract action items from the provided transcript segments.',
     'For each action item output one line: the task, then "— Owner: <name>" (or "(not stated)"), then "— Deadline: <when>" (or "(not stated)").',
     'Only include tasks someone committed to or was assigned in the transcript. Suggestions you infer must be prefixed "[suggested]" and listed separately under "## Suggested follow-ups".',
     'Never guess names, dates, or numbers. If there are no action items, say "No explicit action items in this session."',
+    responseLanguageNote(responseLanguage),
     UNTRUSTED_NOTE
-  ].join('\n')
+  ]
+    .filter((l) => l.length > 0)
+    .join('\n')
 }
 
-export function meetingAskPrompt(): string {
+export function meetingAskPrompt(responseLanguage = 'auto'): string {
   return [
     'You are a meeting copilot. Answer the user\'s question using ONLY the provided transcript segments from the current meeting.',
     'If the transcript does not contain the answer, say so plainly. Distinguish direct quotes/paraphrases (confirmed) from your interpretation (label it "Interpretation:"). Never invent participants or events.',
+    responseLanguageNote(responseLanguage),
     UNTRUSTED_NOTE
-  ].join('\n')
+  ]
+    .filter((l) => l.length > 0)
+    .join('\n')
 }
 
 /** Refine an existing answer (Stage 10 UI): shorter or rephrased. */
@@ -112,4 +141,77 @@ export function renderModeContextBlock(items: Array<{ type: string; displayName:
     'Context (traceable; cite source names when used):\n' +
     items.map((i) => `[${i.type}] ${i.displayName}: ${i.text}`).join('\n')
   )
+}
+
+/* ─── Practice interview prompts (Module K, transformation) ─────────────── */
+
+const PRACTICE_ANTI_FABRICATION =
+  'Assess ONLY what the candidate actually said. Never credit them with experience, ' +
+  'metrics, employers, or projects they did not mention. When an improved answer is requested, ' +
+  'it may only reorganize, tighten, and clarify what the candidate themselves stated — it must ' +
+  'not add facts, numbers, or experience they did not say.'
+
+export function practiceQuestionPrompt(opts: {
+  type: string
+  difficulty: 'easy' | 'medium' | 'hard'
+  role: string
+  hasJobDescription: boolean
+  responseLanguage?: string
+}): string {
+  const typeGuide: Record<string, string> = {
+    behavioral: 'Ask BEHAVIORAL questions about past experience ("Tell me about a time…").',
+    technical: 'Ask TECHNICAL knowledge questions for the role.',
+    'software-engineering': 'Ask realistic software-engineering interview questions (design, debugging, testing, collaboration).',
+    coding: 'Give ONE concrete coding problem per turn (solvable in a few minutes of writing; state inputs/outputs/constraints).',
+    'system-design': 'Ask SYSTEM DESIGN questions (scalable architecture, trade-offs, data flow).',
+    'ai-evaluation': 'Ask questions about AI/ML quality evaluation: metrics, rubrics, datasets, regression testing, human review.',
+    custom: 'Ask questions matching the user-provided focus.'
+  }
+  return [
+    'You are a professional interviewer running a mock interview, one question at a time.',
+    typeGuide[opts.type] ?? typeGuide['custom']!,
+    `Difficulty: ${opts.difficulty}.`,
+    opts.role ? `The role is: ${opts.role}.` : '',
+    opts.hasJobDescription
+      ? 'The job description is provided in the user content — align questions with it.'
+      : '',
+    'Rules: ask exactly ONE question. Output ONLY the question text — no numbering, no greeting, no commentary, no hints.',
+    'If previous questions and answers are provided, ask a natural follow-up or a new angle; never repeat an earlier question.',
+    responseLanguageNote(opts.responseLanguage ?? 'auto')
+  ]
+    .filter((l) => l.length > 0)
+    .join('\n')
+}
+
+export function practiceEvaluationPrompt(opts: {
+  type: string
+  question: string
+  answer: string
+  responseLanguage?: string
+}): string {
+  return [
+    'You are a rigorous but fair interview evaluator. Evaluate the candidate\'s answer to ONE interview question.',
+    PRACTICE_ANTI_FABRICATION,
+    'Score each dimension 1–5 (5 = excellent). Dimensions: Communication, Technical accuracy, Relevance, Completeness, Problem solving.',
+    '"overall" is your holistic 1–5 score, not an average.',
+    'If the answer is empty or unrelated, score honestly low (1–2) and say what was missing.',
+    'Respond with ONLY a JSON object (no markdown fences, no commentary) shaped exactly:',
+    '{"overall": <1-5>, "dimensions": [{"dimension": "Communication", "score": <1-5>, "comment": "<one sentence>"}, {"dimension": "Technical accuracy", "score": <1-5>, "comment": "<one sentence>"}, {"dimension": "Relevance", "score": <1-5>, "comment": "<one sentence>"}, {"dimension": "Completeness", "score": <1-5>, "comment": "<one sentence>"}, {"dimension": "Problem solving", "score": <1-5>, "comment": "<one sentence>"}], "strengths": ["<specific strength>"], "improvements": ["<specific, actionable improvement>"], "improvedAnswer": "<a stronger version of THIS answer using only what the candidate stated>"}',
+    responseLanguageNote(opts.responseLanguage ?? 'auto')
+  ]
+    .filter((l) => l.length > 0)
+    .join('\n')
+}
+
+export function practiceScorecardPrompt(opts: { type: string; responseLanguage?: string }): string {
+  return [
+    'You are producing the FINAL SCORECARD for a completed mock interview.',
+    'Base every score ONLY on the questions, answers, and per-answer evaluations provided.',
+    PRACTICE_ANTI_FABRICATION,
+    'Score each dimension 1–5 across the whole interview. Respond with ONLY a JSON object shaped exactly:',
+    '{"overall": <1-5>, "communication": <1-5>, "technicalAccuracy": <1-5>, "relevance": <1-5>, "completeness": <1-5>, "problemSolving": <1-5>, "summary": "<3-4 sentences: what the candidate did well and where they stand>", "areasForImprovement": ["<specific, actionable area>"]}',
+    responseLanguageNote(opts.responseLanguage ?? 'auto')
+  ]
+    .filter((l) => l.length > 0)
+    .join('\n')
 }

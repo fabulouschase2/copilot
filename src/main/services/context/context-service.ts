@@ -26,20 +26,28 @@ import { estimateTokens, rank, renderContextBlock, RankedItem, RankableItem } fr
 /** Minimal store contract so tests can substitute the file-backed store. */
 export interface ContextStoreLike {
   listDocuments(): Array<{ sourceId: string; displayName: string; text: string; status: 'ready' | 'partial'; createdAt: string; updatedAt: string }>
-  listFacts(): Array<{ factId: string; text: string; category: ProfileCategory; origin: 'user' | 'model'; createdAt: string; updatedAt: string }>
+  listFacts(profileId?: string): Array<{ factId: string; text: string; category: ProfileCategory; origin: 'user' | 'model'; createdAt: string; updatedAt: string; profileId: string }>
   isExcluded(sourceId: string, type: string): boolean
   setExcluded(sourceId: string | undefined, type: string | undefined, excluded: boolean): void
   addDocument(doc: { sourceId: string; displayName: string; text: string; status: 'ready' | 'partial'; createdAt: string; updatedAt: string }): void
   removeDocument(sourceId: string): void
-  addFact(fact: { factId: string; text: string; category: ProfileCategory; origin: 'user' | 'model'; createdAt: string; updatedAt: string }): void
+  addFact(fact: { factId: string; text: string; category: ProfileCategory; origin: 'user' | 'model'; createdAt: string; updatedAt: string; profileId: string }): void
   updateFact(factId: string, patch: { text?: string; category?: ProfileCategory }): boolean
   removeFact(factId: string): boolean
+  /** Profile management; supported by the SQLite store (tests may omit). */
+  listProfiles?(): Array<{ profileId: string; name: string; createdAt: string; updatedAt: string }>
+  upsertProfile?(profile: { profileId: string; name: string; createdAt: string; updatedAt: string }): void
+  renameProfile?(profileId: string, name: string): boolean
+  deleteProfile?(profileId: string): boolean
+  countFacts?(profileId: string): number
 }
 
 export interface ContextDeps {
   store: ContextStoreLike
   engine: ContextEngine
   settings: () => ContextSettings
+  /** Active personal profile: facts are scoped to it (transformation). */
+  activeProfileId?: () => string
   /** Window used as the dialog parent; nullable in tests. */
   getWindow?: () => BrowserWindow | null
 }
@@ -197,6 +205,11 @@ export class ContextService {
 
   /* ── profile ────────────────────────────────────────────────────────── */
 
+  /** Facts belong to the ACTIVE personal profile. */
+  private get profileId(): string {
+    return this.deps.activeProfileId?.() ?? 'default'
+  }
+
   applyProfileOp(op: ProfileFactOp): { ok: boolean; message?: string } {
     switch (op.op) {
       case 'add': {
@@ -207,7 +220,8 @@ export class ContextService {
           category: op.category,
           origin: 'user',
           createdAt: now,
-          updatedAt: now
+          updatedAt: now,
+          profileId: this.profileId
         })
         return { ok: true }
       }
@@ -220,6 +234,49 @@ export class ContextService {
         return ok ? { ok: true } : { ok: false, message: 'Unknown fact id' }
       }
     }
+  }
+
+  /* ── personal profiles (transformation) ─────────────────────────────── */
+
+  listProfilesWithCounts(): Array<{
+    profileId: string
+    name: string
+    factCount: number
+    createdAt: string
+    updatedAt: string
+  }> {
+    const profiles = this.deps.store.listProfiles?.() ?? []
+    return profiles.map((p) => ({
+      profileId: p.profileId,
+      name: p.name,
+      factCount: this.deps.store.countFacts?.(p.profileId) ?? 0,
+      createdAt: p.createdAt,
+      updatedAt: p.updatedAt
+    }))
+  }
+
+  createProfile(name: string): { ok: boolean; profileId?: string; message?: string } {
+    if (!this.deps.store.upsertProfile) return { ok: false, message: 'This store does not support profiles.' }
+    if (name.trim().length === 0) return { ok: false, message: 'Profile name cannot be empty.' }
+    const existing = this.deps.store.listProfiles?.() ?? []
+    if (existing.some((p) => p.name.toLowerCase() === name.trim().toLowerCase())) {
+      return { ok: false, message: 'A profile with this name already exists.' }
+    }
+    const profileId = `prof-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+    const now = new Date().toISOString()
+    this.deps.store.upsertProfile({ profileId, name: name.trim(), createdAt: now, updatedAt: now })
+    return { ok: true, profileId }
+  }
+
+  renameProfile(profileId: string, name: string): { ok: boolean; message?: string } {
+    if (name.trim().length === 0) return { ok: false, message: 'Profile name cannot be empty.' }
+    const ok = this.deps.store.renameProfile?.(profileId, name.trim()) ?? false
+    return ok ? { ok: true } : { ok: false, message: 'Unknown profile id' }
+  }
+
+  deleteProfile(profileId: string): { ok: boolean; message?: string } {
+    const ok = this.deps.store.deleteProfile?.(profileId) ?? false
+    return ok ? { ok: true } : { ok: false, message: 'Unknown profile id' }
   }
 
   /* ── exclusions & listing ───────────────────────────────────────────── */
@@ -243,7 +300,7 @@ export class ContextService {
         excluded: this.deps.store.isExcluded(doc.sourceId, 'document')
       })
     }
-    for (const fact of this.deps.store.listFacts()) {
+    for (const fact of this.deps.store.listFacts(this.profileId)) {
       sources.push({
         sourceId: fact.factId,
         type: 'profile',
@@ -292,7 +349,7 @@ export class ContextService {
       }
     }
     if (options.includeProfile) {
-      for (const fact of this.deps.store.listFacts()) {
+      for (const fact of this.deps.store.listFacts(this.profileId)) {
         if (this.deps.store.isExcluded(fact.factId, 'profile')) continue
         candidates.push({
           itemId: fact.factId,

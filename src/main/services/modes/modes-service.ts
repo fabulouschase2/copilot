@@ -26,6 +26,10 @@ export interface ModeDeps {
   resolveProvider: () => { provider: AIProvider; model: string } | null
   retrieve: (question: string, options: ContextOptions) => RetrievalResult
   getSessionId: () => string | null
+  /** Response language setting ('auto' = no instruction). */
+  getResponseLanguage?: () => string
+  /** Saved-meeting transcript lookup for ask-about-saved-meeting. Null when unknown. */
+  getSavedMeetingTranscript?: (meetingId: string) => string | null
   /** User-initiated save; implemented with dialog+fs in main wiring. */
   saveText: (defaultName: string, content: string) => Promise<{ ok: boolean; canceled?: boolean; message?: string }>
 }
@@ -40,6 +44,7 @@ export interface ModeEvents {
     evidenceLevel?: 'none' | 'partial' | 'good'
     contextUsed: Array<{ sourceId: string; displayName: string; type: string; score: number }>
     message?: string
+    usage?: { inputTokens: number | null; outputTokens: number | null }
   }): void
   onError(channel: 'interview' | 'meeting', requestId: string, message: string): void
   onQuestion(question: ModeQuestion): void
@@ -118,6 +123,7 @@ export class ModesService {
   interviewAnswer(req: {
     question: string
     style: 'concise' | 'detailed' | 'technical' | 'star' | 'coding' | 'research'
+    detail?: 'concise' | 'detailed'
     includeSession: boolean
   }): { ok: true; requestId: string } | { ok: false; message: string } {
     const resolved = this.deps.resolveProvider()
@@ -135,7 +141,12 @@ export class ModesService {
       includeSession: req.includeSession
     })
     const evidenceLevel = assessEvidence(retrieval)
-    const system = interviewSystemPrompt(req.style, evidenceLevel)
+    const system = interviewSystemPrompt(
+      req.style,
+      evidenceLevel,
+      req.detail ?? 'concise',
+      this.deps.getResponseLanguage?.() ?? 'auto'
+    )
     const user =
       `Question: ${req.question}\n\n${renderModeContextBlock(retrieval.items)}` +
       (evidenceLevel === 'none'
@@ -181,7 +192,8 @@ export class ModesService {
     const requestId = `m-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
     const abort = new AbortController()
     this.slots.set('meeting', { id: requestId, abort })
-    const system = req.kind === 'summary' ? meetingSummaryPrompt() : meetingActionsPrompt()
+    const lang = this.deps.getResponseLanguage?.() ?? 'auto'
+    const system = req.kind === 'summary' ? meetingSummaryPrompt(lang) : meetingActionsPrompt(lang)
     const user = renderModeContextBlock(retrieval.items)
 
     void this.stream('meeting', requestId, resolved.provider, resolved.model, system, user, abort, {
@@ -190,28 +202,47 @@ export class ModesService {
     return { ok: true, requestId }
   }
 
-  meetingAsk(req: { question: string }): { ok: true; requestId: string } | { ok: false; message: string } {
+  meetingAsk(req: { question: string; meetingId?: string }): { ok: true; requestId: string } | { ok: false; message: string } {
     const resolved = this.deps.resolveProvider()
     if (!resolved) return { ok: false, message: 'No AI provider configured. Add one in Settings.' }
     if (this.slots.has('meeting')) {
       return { ok: false, message: 'A meeting generation is already running. Stop it first.' }
     }
-    if (!this.deps.getSessionId()) {
-      return { ok: false, message: 'No active meeting session. Start transcription first.' }
-    }
+
     const requestId = `m-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
     const abort = new AbortController()
     this.slots.set('meeting', { id: requestId, abort })
+    const lang = this.deps.getResponseLanguage?.() ?? 'auto'
 
-    // Meeting Q&A is strictly current-session: no documents, no profile.
-    const retrieval = this.deps.retrieve(req.question, {
-      includeSession: true,
-      includeDocuments: false,
-      includeProfile: false
-    })
-    const user = `${req.question}\n\n${renderModeContextBlock(retrieval.items)}`
-    void this.stream('meeting', requestId, resolved.provider, resolved.model, meetingAskPrompt(), user, abort, {
-      contextUsed: retrieval.items
+    // Two strictly separate context sources — never mixed:
+    //  - meetingId set → the SAVED meeting's transcript only.
+    //  - otherwise → the live session only (no documents, no profile).
+    let user: string
+    if (req.meetingId) {
+      const transcript = this.deps.getSavedMeetingTranscript?.(req.meetingId) ?? null
+      if (transcript === null) {
+        this.slots.delete('meeting')
+        return { ok: false, message: 'Saved meeting not found.' }
+      }
+      if (transcript.trim().length === 0) {
+        this.slots.delete('meeting')
+        return { ok: false, message: 'This saved meeting has no transcript to ask about.' }
+      }
+      user = `Question: ${req.question}\n\nSaved meeting transcript:\n${bounded(transcript, 60_000)}`
+    } else {
+      if (!this.deps.getSessionId()) {
+        this.slots.delete('meeting')
+        return { ok: false, message: 'No active meeting session. Start transcription first.' }
+      }
+      const retrieval = this.deps.retrieve(req.question, {
+        includeSession: true,
+        includeDocuments: false,
+        includeProfile: false
+      })
+      user = `${req.question}\n\n${renderModeContextBlock(retrieval.items)}`
+    }
+    void this.stream('meeting', requestId, resolved.provider, resolved.model, meetingAskPrompt(lang), user, abort, {
+      contextUsed: []
     })
     return { ok: true, requestId }
   }
@@ -270,6 +301,7 @@ export class ModesService {
     }
   ): Promise<void> {
     let text = ''
+    let usage: { inputTokens: number | null; outputTokens: number | null } | undefined
     try {
       // Gemini 3.x on the OpenAI-compat endpoint intermittently returns a
       // complete stream with reasoning metadata but zero visible content
@@ -277,6 +309,7 @@ export class ModesService {
       // the first attempt emitted no deltas, so no duplicate text is shown.
       for (let attempt = 1; attempt <= 2; attempt++) {
         text = ''
+        usage = undefined
         for await (const chunk of provider.chatStream({
           model,
           messages: [
@@ -291,6 +324,8 @@ export class ModesService {
           if (chunk.type === 'delta') {
             text += chunk.text
             this.events.onDelta(channel, requestId, chunk.text)
+          } else if (chunk.type === 'usage') {
+            usage = { inputTokens: chunk.inputTokens ?? null, outputTokens: chunk.outputTokens ?? null }
           }
         }
         if (text.trim().length > 0) break
@@ -309,7 +344,8 @@ export class ModesService {
           text: '',
           evidenceLevel: meta.evidenceLevel,
           contextUsed: meta.contextUsed,
-          message: 'Empty provider response after one retry'
+          message: 'Empty provider response after one retry',
+          usage
         })
         return
       }
@@ -319,7 +355,8 @@ export class ModesService {
         status: 'completed',
         text,
         evidenceLevel: meta.evidenceLevel,
-        contextUsed: meta.contextUsed
+        contextUsed: meta.contextUsed,
+        usage
       })
     } catch (err) {
       if (abort.signal.aborted) {
@@ -333,6 +370,11 @@ export class ModesService {
       this.slots.delete(channel)
     }
   }
+}
+
+/** Hard character bound for included transcripts. */
+function bounded(text: string, maxChars: number): string {
+  return text.length <= maxChars ? text : text.slice(0, maxChars) + '\n…(truncated)'
 }
 
 /** Deterministic evidence assessment for interview answers. */

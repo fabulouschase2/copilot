@@ -25,6 +25,8 @@ export interface ProfileFactRecord {
   origin: 'user' | 'model'
   createdAt: string
   updatedAt: string
+  /** Owning personal profile (legacy JSON facts predate profiles). */
+  profileId: string
 }
 
 interface StoreFile {
@@ -101,8 +103,10 @@ export class ContextStore {
 
   /* profile */
 
-  listFacts(): ProfileFactRecord[] {
-    return [...this.data.profileFacts]
+  listFacts(profileId?: string): ProfileFactRecord[] {
+    const all = [...this.data.profileFacts]
+    // Legacy records without a profile id belong to the default profile.
+    return profileId ? all.filter((f) => (f.profileId ?? 'default') === profileId) : all
   }
 
   addFact(fact: ProfileFactRecord): void {
