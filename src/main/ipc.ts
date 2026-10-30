@@ -274,7 +274,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   ipcMain.handle(IPC.contextBackup, () => deps.persistence.backupNow())
   ipcMain.handle(IPC.contextRestore, () => deps.persistence.restoreLatest())
 
-  ipcMain.handle(IPC.meetingsList, () => deps.listMeetings())
+  ipcMain.handle(IPC.meetingsList, () => ({ meetings: deps.listMeetings() }))
   ipcMain.handle(IPC.meetingsSave, (_e, raw: unknown) => deps.saveMeeting(raw))
   ipcMain.handle(IPC.meetingsDelete, (_e, raw: unknown) => {
     const parsed = MeetingIdRequestSchema.safeParse(raw)

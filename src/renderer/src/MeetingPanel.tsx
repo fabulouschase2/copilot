@@ -82,7 +82,7 @@ export function MeetingPanel(props: { settings: AppSettings }): React.JSX.Elemen
     const load = query.trim().length > 0
       ? window.copilot.searchMeetings(query.trim())
       : window.copilot.listMeetings()
-    void load.then((res) => setSaved(res.meetings))
+    void load.then((res) => setSaved(res?.meetings ?? []))
   }, [])
   useEffect(() => { refreshSaved() }, [refreshSaved])
 
