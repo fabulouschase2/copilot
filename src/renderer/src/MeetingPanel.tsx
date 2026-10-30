@@ -8,6 +8,7 @@ import {
   TranscriptStatusEvent
 } from '../../shared/protocol'
 import { startCapture, CaptureSession, CaptureError } from './audio/capture'
+import { parseActionItems } from '../../shared/meeting-notes'
 import { ErrorBox, NoticeBox, fmtDuration, shortTime } from './ui'
 
 /**
@@ -43,35 +44,6 @@ function transcriptText(segments: LiveSegment[]): string {
   return segments
     .map((s) => `[${fmtDuration(s.startMs)}] ${s.source === 'mic' ? 'Mic' : 'System'}: ${s.text}`)
     .join('\n')
-}
-
-/** Parse the "## Action items" section of generated notes into structured items. */
-export function parseActionItems(notes: string): MeetingActionItem[] {
-  const lines = notes.split('\n')
-  const startIdx = lines.findIndex((l) => /^#{1,3}\s*action items/i.test(l.trim()))
-  if (startIdx === -1) return []
-  const items: MeetingActionItem[] = []
-  let current: MeetingActionItem | null = null
-  for (const line of lines.slice(startIdx + 1)) {
-    const trimmed = line.trim()
-    if (/^#{1,3}\s/.test(trimmed)) break // next section
-    if (trimmed.length === 0) continue
-    const ownerM = trimmed.match(/—\s*Owner:\s*(.+?)(?:\s*—\s*Deadline:\s*(.+))?$/i)
-    const task = trimmed.replace(/—\s*Owner:.*$/i, '').replace(/^[-*•]\s*/, '').trim()
-    if (ownerM && task.length > 0) {
-      current = {
-        task,
-        owner: ownerM[1]?.trim() || '(not stated)',
-        deadline: ownerM[2]?.trim() || '(not stated)',
-        suggested: /^\[suggested\]/i.test(task)
-      }
-      items.push(current)
-    } else if (trimmed.length > 0 && items.length < 100) {
-      // continuation or unstructured line: keep as its own item without owner
-      items.push({ task: trimmed.replace(/^[-*•]\s*/, ''), owner: '(not stated)', deadline: '(not stated)', suggested: false })
-    }
-  }
-  return items
 }
 
 export function MeetingPanel(props: { settings: AppSettings }): React.JSX.Element {

@@ -297,7 +297,7 @@ export class SQLiteStore {
       allTurns: p('SELECT idx, question, answer, feedback_json, spoken FROM practice_turns WHERE practice_id = ? ORDER BY idx'),
       updTurnAnswer: p('UPDATE practice_turns SET answer = ?, spoken = ? WHERE practice_id = ? AND idx = ?'),
       updPractice: p('UPDATE practice_sessions SET status = ?, scorecard_json = ?, updated_at = ? WHERE practice_id = ?'),
-      searchMeetings: p("SELECT meeting_id, title, transcript, notes, created_at, updated_at, source, language, provider_label, started_at, ended_at, duration_ms, action_items FROM meetings WHERE title LIKE ? OR notes LIKE ? OR transcript LIKE ? ORDER BY updated_at DESC")
+      searchMeetings: p('SELECT meeting_id, title, transcript, notes, created_at, updated_at, source, language, provider_label, started_at, ended_at, duration_ms, action_items FROM meetings WHERE title LIKE ? OR notes LIKE ? OR transcript LIKE ? OR action_items LIKE ? ORDER BY updated_at DESC')
     }
   }
 
@@ -444,7 +444,7 @@ export class SQLiteStore {
 
   searchMeetings(query: string): MeetingRecord[] {
     const like = `%${query.replace(/[%_]/g, '')}%`
-    return (this.stmts.searchMeetings.all(like, like, like) as Array<Record<string, unknown>>).map(rowToMeeting)
+    return (this.stmts.searchMeetings.all(like, like, like, like) as Array<Record<string, unknown>>).map(rowToMeeting)
   }
 
   getMeeting(meetingId: string): MeetingRecord | undefined {
@@ -455,6 +455,7 @@ export class SQLiteStore {
   }
 
   upsertMeeting(m: MeetingRecord): void {
+    // Optional metadata binds as NULL when absent — SQLite rejects undefined.
     this.db
       .prepare('INSERT OR REPLACE INTO meetings (meeting_id, title, transcript, notes, created_at, updated_at, source, language, provider_label, started_at, ended_at, duration_ms, action_items) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
       .run(
@@ -464,13 +465,13 @@ export class SQLiteStore {
         m.notes,
         m.createdAt,
         m.updatedAt,
-        m.source,
-        m.language,
-        m.providerLabel,
-        m.startedAt,
-        m.endedAt,
-        m.durationMs,
-        JSON.stringify(m.actionItems)
+        m.source ?? null,
+        m.language ?? null,
+        m.providerLabel ?? null,
+        m.startedAt ?? null,
+        m.endedAt ?? null,
+        m.durationMs ?? null,
+        JSON.stringify(m.actionItems ?? [])
       )
   }
 
