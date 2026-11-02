@@ -122,6 +122,68 @@ describe('modes service: meeting ask against a saved meeting', () => {
     expect(res.ok).toBe(false)
   })
 
+  it('end-of-meeting generation works from explicit transcriptText with no live session', async () => {
+    const { provider, requests } = fakeRecordingProvider()
+    const service = new ModesService({
+      resolveProvider: () => ({ provider, model: 'm' }),
+      retrieve: () => ({ items: [], estimatedTokens: 0, block: '' }),
+      getSessionId: () => null, // meeting already stopped
+      saveText: async () => ({ ok: true })
+    })
+    const res = service.meetingGenerate({
+      kind: 'summary',
+      includeDocuments: false,
+      includeProfile: false,
+      transcriptText: '[0:12] Mic: Ada will send the report by Friday'
+    })
+    expect(res.ok).toBe(true)
+    await new Promise((r) => setTimeout(r, 10))
+    const sent = JSON.stringify(requests[0].messages)
+    expect(sent).toContain('Ada will send the report by Friday')
+  })
+
+  it('generation without a session or transcript is rejected with guidance', () => {
+    const { provider } = fakeRecordingProvider()
+    const service = new ModesService({
+      resolveProvider: () => ({ provider, model: 'm' }),
+      retrieve: () => ({ items: [], estimatedTokens: 0, block: '' }),
+      getSessionId: () => null,
+      saveText: async () => ({ ok: true })
+    })
+    const res = service.meetingGenerate({ kind: 'summary', includeDocuments: false, includeProfile: false })
+    expect(res.ok).toBe(false)
+  })
+
+  it('ask works against an explicit just-ended meeting transcript', async () => {
+    const { provider, requests } = fakeRecordingProvider()
+    const service = new ModesService({
+      resolveProvider: () => ({ provider, model: 'm' }),
+      retrieve: () => ({ items: [], estimatedTokens: 0, block: '' }),
+      getSessionId: () => null,
+      saveText: async () => ({ ok: true })
+    })
+    const res = service.meetingAsk({
+      question: 'Who ships on Friday?',
+      transcriptText: '[0:30] Mic: Ada ships the checklist on Friday'
+    })
+    expect(res.ok).toBe(true)
+    await new Promise((r) => setTimeout(r, 10))
+    expect(JSON.stringify(requests[0].messages)).toContain('Ada ships the checklist on Friday')
+  })
+
+  it('ask without any transcript source is rejected with guidance', () => {
+    const { provider } = fakeRecordingProvider()
+    const service = new ModesService({
+      resolveProvider: () => ({ provider, model: 'm' }),
+      retrieve: () => ({ items: [], estimatedTokens: 0, block: '' }),
+      getSessionId: () => null,
+      saveText: async () => ({ ok: true })
+    })
+    const res = service.meetingAsk({ question: 'hi' })
+    expect(res.ok).toBe(false)
+    expect(res.ok === false && res.message).toContain('No meeting transcript')
+  })
+
   it('live-session ask still works without a meetingId', async () => {
     const { provider, requests } = fakeRecordingProvider()
     const service = new ModesService({

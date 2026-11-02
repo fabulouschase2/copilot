@@ -166,27 +166,17 @@ export class ModesService {
     kind: 'summary' | 'actions'
     includeDocuments: boolean
     includeProfile: boolean
+    transcriptText?: string
   }): { ok: true; requestId: string } | { ok: false; message: string } {
     const resolved = this.deps.resolveProvider()
     if (!resolved) return { ok: false, message: 'No AI provider configured. Add one in Settings.' }
     if (this.slots.has('meeting')) {
       return { ok: false, message: 'A meeting generation is already running. Stop it first.' }
     }
-    if (!this.deps.getSessionId() && !req.includeDocuments && !req.includeProfile) {
-      return { ok: false, message: 'No active meeting session. Start transcription first (or explicitly include saved sources).' }
-    }
 
-    const question =
-      req.kind === 'summary'
-        ? 'Summarize this meeting: topics, decisions, action items with owners and deadlines.'
-        : 'List every action item from this meeting with owners and deadlines.'
-    const retrieval = this.deps.retrieve(question, {
-      includeSession: true,
-      includeDocuments: req.includeDocuments,
-      includeProfile: req.includeProfile
-    })
-    if (retrieval.items.length === 0) {
-      return { ok: false, message: 'Nothing to summarize yet — the current session has no captured conversation.' }
+    const explicitTranscript = req.transcriptText?.trim() ?? ''
+    if (!explicitTranscript && !this.deps.getSessionId() && !req.includeDocuments && !req.includeProfile) {
+      return { ok: false, message: 'No meeting transcript to summarize. Record the meeting first (or explicitly include saved sources).' }
     }
 
     const requestId = `m-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
@@ -194,15 +184,39 @@ export class ModesService {
     this.slots.set('meeting', { id: requestId, abort })
     const lang = this.deps.getResponseLanguage?.() ?? 'auto'
     const system = req.kind === 'summary' ? meetingSummaryPrompt(lang) : meetingActionsPrompt(lang)
-    const user = renderModeContextBlock(retrieval.items)
+
+    let contextUsed: Array<{ sourceId: string; displayName: string; type: string; score: number }> = []
+    let user: string
+    if (explicitTranscript) {
+      // End-of-meeting path: the caller supplies the captured transcript
+      // directly; it is never mixed with session context or documents.
+      user = `Meeting transcript:
+${bounded(explicitTranscript, 200_000)}`
+    } else {
+      const question =
+        req.kind === 'summary'
+          ? 'Summarize this meeting: topics, decisions, action items with owners and deadlines.'
+          : 'List every action item from this meeting with owners and deadlines.'
+      const retrieval = this.deps.retrieve(question, {
+        includeSession: true,
+        includeDocuments: req.includeDocuments,
+        includeProfile: req.includeProfile
+      })
+      if (retrieval.items.length === 0) {
+        this.slots.delete('meeting')
+        return { ok: false, message: 'Nothing to summarize yet — the current session has no captured conversation.' }
+      }
+      contextUsed = retrieval.items
+      user = renderModeContextBlock(retrieval.items)
+    }
 
     void this.stream('meeting', requestId, resolved.provider, resolved.model, system, user, abort, {
-      contextUsed: retrieval.items
+      contextUsed
     })
     return { ok: true, requestId }
   }
 
-  meetingAsk(req: { question: string; meetingId?: string }): { ok: true; requestId: string } | { ok: false; message: string } {
+  meetingAsk(req: { question: string; meetingId?: string; transcriptText?: string }): { ok: true; requestId: string } | { ok: false; message: string } {
     const resolved = this.deps.resolveProvider()
     if (!resolved) return { ok: false, message: 'No AI provider configured. Add one in Settings.' }
     if (this.slots.has('meeting')) {
@@ -214,8 +228,9 @@ export class ModesService {
     this.slots.set('meeting', { id: requestId, abort })
     const lang = this.deps.getResponseLanguage?.() ?? 'auto'
 
-    // Two strictly separate context sources — never mixed:
+    // Strictly separate context sources — never mixed:
     //  - meetingId set → the SAVED meeting's transcript only.
+    //  - transcriptText set → the JUST-ENDED meeting's accumulated transcript only.
     //  - otherwise → the live session only (no documents, no profile).
     let user: string
     if (req.meetingId) {
@@ -229,10 +244,12 @@ export class ModesService {
         return { ok: false, message: 'This saved meeting has no transcript to ask about.' }
       }
       user = `Question: ${req.question}\n\nSaved meeting transcript:\n${bounded(transcript, 60_000)}`
+    } else if (req.transcriptText && req.transcriptText.trim().length > 0) {
+      user = `Question: ${req.question}\n\nMeeting transcript:\n${bounded(req.transcriptText.trim(), 60_000)}`
     } else {
       if (!this.deps.getSessionId()) {
         this.slots.delete('meeting')
-        return { ok: false, message: 'No active meeting session. Start transcription first.' }
+        return { ok: false, message: 'No meeting transcript to ask about. Record or open a meeting first.' }
       }
       const retrieval = this.deps.retrieve(req.question, {
         includeSession: true,

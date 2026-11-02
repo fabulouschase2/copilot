@@ -177,7 +177,7 @@ describe('ModesService — meeting', () => {
     h.sessionId = null
     const res = h.service.meetingGenerate({ kind: 'summary', includeDocuments: false, includeProfile: false })
     expect(res.ok).toBe(false)
-    if (!res.ok) expect(res.message).toMatch(/No active meeting session/)
+    if (!res.ok) expect(res.message).toMatch(/No meeting transcript to summarize/)
     const optIn = h.service.meetingGenerate({ kind: 'summary', includeDocuments: true, includeProfile: false })
     expect(optIn.ok).toBe(true)
     h.service.cancel('meeting')

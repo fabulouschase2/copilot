@@ -107,7 +107,9 @@ export function ReadScreenModal(props: { settings: AppSettings; onClose: () => v
     setResult(null)
     setStreamText('')
     setRunning(true)
-    window.copilot.clearScreen()
+    // NOTE: deliberately NOT clearing the capture history — identical screens
+    // must hit the duplicate path and skip the provider call (that is the
+    // duplicate-detection contract; clearing here would defeat it).
     const res = await window.copilot.analyzeScreen({
       kind,
       sourceId: sourceId ?? undefined,

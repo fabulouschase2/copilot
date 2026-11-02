@@ -97,3 +97,18 @@
 ## Deliberate exclusions (per spec §8/§10/§13 — not gaps)
 
 - Capture-invisible overlay, display-affinity concealment, autotyper, stealth recording, "undetectability" claims.
+
+
+---
+
+## v0.2.1 addendum — audio pipeline fix + full audit (2026-11-02)
+
+Manual testing found that **Start interview never captured audio**: the renderer sensor layer
+(`startCapture` → IPC PCM stream) was missing from InterviewPanel entirely, and Electron 38's
+`getDisplayMedia` flow was denied at the `'media'` permission gate before the display-media handler
+could provide loopback audio. Both are fixed and verified with real audio (SAPI speech through the
+speakers) in the development build AND the installed `Copilot-Setup-0.2.1.exe`. The full
+feature-by-feature audit with statuses and evidence lives in `docs/full-functionality-audit.md`;
+the audio diagnostics view (header → 🎚 Audio) exposes the pipeline state without exposing content
+or credentials. Live transcription remains BLOCKED on the user saving an STT API key — the
+pipeline is verified up to the provider credential boundary (real provider responds 401).

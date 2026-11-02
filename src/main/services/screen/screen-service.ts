@@ -251,31 +251,51 @@ export class ScreenService {
           ? transcriptRefs.map((s) => `[${s.seq}] ${s.text}`).join('\n')
           : undefined
 
+      // Gemini 3.x intermittently returns a complete stream with reasoning
+      // metadata but zero visible content (same failure mode as text modes;
+      // measured ~25% on the free tier). Bounded to ONE silent retry — when
+      // the first attempt emitted no deltas, nothing duplicate can appear.
       let observations = ''
-      try {
-        observations = await this.analyzer.analyze(
-          {
-            provider: vision.provider,
-            model: vision.model,
-            imageJpegBase64: jpegBase64,
-            question: req.question,
-            transcriptContext,
-            signal: abort.signal
-          },
-          {
-            onDelta: (d) => this.events.onDelta({ requestId, delta: d }),
-            onFirstToken: (ms) => {
-              ttftMs = Math.round(ms)
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        let attemptText = ''
+        try {
+          attemptText = await this.analyzer.analyze(
+            {
+              provider: vision.provider,
+              model: vision.model,
+              imageJpegBase64: jpegBase64,
+              question: req.question,
+              transcriptContext,
+              signal: abort.signal
+            },
+            {
+              onDelta: (d) => {
+                attemptText += ''
+                this.events.onDelta({ requestId, delta: d })
+              },
+              onFirstToken: (ms) => {
+                ttftMs = Math.round(ms)
+              }
             }
-          }
-        )
-      } catch (err) {
-        if (abort.signal.aborted) return finish('cancelled', '')
-        const message = err instanceof ProviderError ? err.message : `Vision analysis failed: ${text(err)}`
+          )
+        } catch (err) {
+          if (abort.signal.aborted) return finish('cancelled', '')
+          const message = err instanceof ProviderError ? err.message : `Vision analysis failed: ${text(err)}`
+          this.events.onError({ requestId, code: 'provider', message })
+          return finish('error', '', message)
+        }
+        observations = attemptText
+        if (observations.trim().length > 0) break
+        if (attempt === 1 && !abort.signal.aborted) continue
+      }
+      jpegBase64 = '' // release the encoded payload promptly
+
+      if (observations.trim().length === 0) {
+        const message =
+          'The provider returned an empty response (its reasoning consumed the output). Try again or switch to a different vision model.'
         this.events.onError({ requestId, code: 'provider', message })
         return finish('error', '', message)
       }
-      jpegBase64 = '' // release the encoded payload promptly
 
       if (req.includeContext && observations.trim().length > 0) {
         this.deps.context.add({

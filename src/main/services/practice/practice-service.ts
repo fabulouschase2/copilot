@@ -47,6 +47,7 @@ export interface PracticeEvents {
 }
 
 const TIMEOUT_MS = 90_000
+const RETRY_429_BACKOFF_MS = 6_000
 const MAX_FACT_CHARS = 2_000
 const MAX_TURN_HISTORY_CHARS = 6_000
 
@@ -135,7 +136,18 @@ export class PracticeService {
   }
   private active: ActivePractice | null = null
 
-  constructor(private deps: PracticeDeps) {}
+  constructor(private deps: PracticeDeps) {
+    // A crash or restart can leave rows marked 'active' that no run owns
+    // (only one session can be live at a time). Close them out so history
+    // never shows phantom running interviews.
+    try {
+      for (const s of this.deps.store.listPracticeSessions()) {
+        if (s.status === 'active') this.deps.store.updatePracticeStatus(s.practiceId, 'cancelled', null)
+      }
+    } catch {
+      /* a broken store must not block construction; errors surface on use */
+    }
+  }
 
   bindEvents(events: PracticeEvents): void {
     this.events = events
@@ -475,7 +487,14 @@ export class PracticeService {
 
   /* ── shared streaming ───────────────────────────────────────────────── */
 
-  /** Streams one completion; returns the text, or null on abort/error (reported). */
+  /**
+   * Streams one completion; returns the text, or null on abort/error
+   * (reported). Rate limits (429) are retried ONCE after a backoff — the
+   * practice flow fires sequential provider calls (question → evaluation →
+   * next question → scorecard), and free tiers throttle exactly there.
+   * Nothing has streamed to the UI when a 429 arrives, so one silent retry
+   * can never duplicate visible text.
+   */
   private async collect(
     practiceId: string,
     requestId: string,
@@ -486,31 +505,42 @@ export class PracticeService {
     user: string,
     signal: AbortSignal
   ): Promise<string | null> {
-    let text = ''
-    try {
-      for await (const chunk of provider.chatStream({
-        model,
-        messages: [
-          { role: 'system', content: system },
-          { role: 'user', content: user }
-        ],
-        signal,
-        timeoutMs: TIMEOUT_MS
-      })) {
-        if (chunk.type === 'delta') {
-          text += chunk.text
-          this.events.onDelta({ practiceId, requestId, kind, delta: chunk.text })
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      let text = ''
+      let rateLimited = false
+      try {
+        for await (const chunk of provider.chatStream({
+          model,
+          messages: [
+            { role: 'system', content: system },
+            { role: 'user', content: user }
+          ],
+          signal,
+          timeoutMs: TIMEOUT_MS
+        })) {
+          if (chunk.type === 'delta') {
+            text += chunk.text
+            this.events.onDelta({ practiceId, requestId, kind, delta: chunk.text })
+          }
+        }
+        return text
+      } catch (err) {
+        if (signal.aborted) return null
+        if (err instanceof ProviderError && err.status === 429 && attempt === 1) {
+          rateLimited = true
+        } else {
+          const message =
+            err instanceof ProviderError ? err.message : 'Generation failed. Check the provider in Settings.'
+          this.events.onError({ practiceId, requestId, message })
+          return null
         }
       }
-      return text
-    } catch (err) {
-      if (!signal.aborted) {
-        const message =
-          err instanceof ProviderError ? err.message : 'Generation failed. Check the provider in Settings.'
-        this.events.onError({ practiceId, requestId, message })
+      if (rateLimited) {
+        await new Promise((resolve) => setTimeout(resolve, RETRY_429_BACKOFF_MS))
+        if (signal.aborted) return null
       }
-      return null
     }
+    return null
   }
 
   private failActive(practiceId: string, message: string): void {

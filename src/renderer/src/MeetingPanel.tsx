@@ -46,6 +46,12 @@ function transcriptText(segments: LiveSegment[]): string {
     .join('\n')
 }
 
+/** The transcript source for generation: live segments, or the open saved meeting. */
+function transcriptForGeneration(segments: LiveSegment[], open: MeetingDetail | null): string {
+  if (segments.some((s) => s.text.trim().length > 0)) return transcriptText(segments)
+  return open?.transcript ?? ''
+}
+
 export function MeetingPanel(props: { settings: AppSettings }): React.JSX.Element {
   const { settings } = props
   const [phase, setPhase] = useState<Phase>('setup')
@@ -239,7 +245,8 @@ export function MeetingPanel(props: { settings: AppSettings }): React.JSX.Elemen
     setStatus(null)
     setPhase('review')
     if (deviceLost) return
-    // Auto-summary: the brief requires the summary to generate on end.
+    // Auto-summary on end. The accumulated transcript travels with the
+    // request (see run()), so stopping the session first is safe.
     await run('summary')
   }
 
@@ -262,7 +269,15 @@ export function MeetingPanel(props: { settings: AppSettings }): React.JSX.Elemen
     targetRef.current = 'notes'
     setNotes('')
     setBusy(kind)
-    const res = await window.copilot.generateMeeting({ kind, includeDocuments: false, includeProfile: false })
+    // The transcript travels WITH the request: summaries must work after the
+    // meeting has ended (the live session is gone by then) and on reopened
+    // saved meetings.
+    const res = await window.copilot.generateMeeting({
+      kind,
+      includeDocuments: false,
+      includeProfile: false,
+      transcriptText: transcriptForGeneration(segments, openMeeting)
+    })
     if (res.ok && res.requestId) requestIdRef.current = res.requestId
     else {
       setError(res.message ?? 'Could not start generation.')
@@ -276,10 +291,15 @@ export function MeetingPanel(props: { settings: AppSettings }): React.JSX.Elemen
     targetRef.current = 'ask'
     setAskAnswer('')
     setBusy('ask')
-    // A saved meeting answers from ITS transcript; a live one from the session.
-    const req = openMeeting && phase === 'review' && openMeeting.meetingId !== meetingIdRef.current
+    // Strict source routing — never mixed:
+    //  - saved meeting open (no live session) → ask against ITS saved transcript
+    //  - just-ended meeting with accumulated segments → ask against that transcript
+    //  - otherwise → the live session
+    const req = openMeeting && !sessionIdRef.current
       ? { question: question.trim(), meetingId: openMeeting.meetingId }
-      : { question: question.trim() }
+      : segments.some((s) => s.text.trim().length > 0) && !sessionIdRef.current
+        ? { question: question.trim(), transcriptText: transcriptText(segments) }
+        : { question: question.trim() }
     const res = await window.copilot.askMeeting(req)
     if (res.ok && res.requestId) requestIdRef.current = res.requestId
     else {

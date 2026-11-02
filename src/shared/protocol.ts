@@ -516,7 +516,14 @@ export const MeetingGenerateRequestSchema = z.object({
   kind: z.enum(['summary', 'actions']),
   /** Saved sources require explicit opt-in; session context is the default. */
   includeDocuments: z.boolean().default(false),
-  includeProfile: z.boolean().default(false)
+  includeProfile: z.boolean().default(false),
+  /**
+   * Explicit transcript for END-OF-MEETing generation: the meeting is
+   * already stopped when the summary runs, so the live session context is
+   * gone. When provided, this text IS the source (never mixed with the
+   * session or saved documents).
+   */
+  transcriptText: z.string().max(500_000).optional()
 })
 
 export const MeetingAskRequestSchema = z.object({
@@ -526,7 +533,12 @@ export const MeetingAskRequestSchema = z.object({
    * instead of the live session. Saved transcripts are never mixed with
    * live session context.
    */
-  meetingId: z.string().min(1).max(64).optional()
+  meetingId: z.string().min(1).max(64).optional(),
+  /**
+   * Explicit transcript for questions about a JUST-ENDED meeting (the live
+   * session is gone; the accumulated transcript travels with the request).
+   */
+  transcriptText: z.string().max(500_000).optional()
 })
 
 /** Structured action item extracted from a meeting (evidence-only fields). */

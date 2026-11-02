@@ -51,6 +51,10 @@ export function PracticePanel(props: { settings: AppSettings }): React.JSX.Eleme
   const [questionStreaming, setQuestionStreaming] = useState(false)
   const [answer, setAnswer] = useState('')
   const [feedback, setFeedback] = useState<PracticeFeedback | null>(null)
+  /** True from Submit until the evaluation event arrives (covers silent providers). */
+  const [awaitingEval, setAwaitingEval] = useState(false)
+  /** Feedback of the PREVIOUS answer, kept readable while the next question loads. */
+  const [previousFeedback, setPreviousFeedback] = useState<{ index: number; feedback: PracticeFeedback } | null>(null)
   const [evalStreaming, setEvalStreaming] = useState(false)
   const [scorecard, setScorecard] = useState<PracticeDetail['scorecard']>(undefined)
   const [turns, setTurns] = useState<PracticeDetail['turns']>([])
@@ -68,6 +72,7 @@ export function PracticePanel(props: { settings: AppSettings }): React.JSX.Eleme
   const speakHandleRef = useRef<{ cancel(): void } | null>(null)
   const answerRef = useRef('')
   const lastQuestionReqRef = useRef<string | null>(null)
+  const questionStreamingRef = useRef(false)
 
   answerRef.current = answer
 
@@ -81,6 +86,7 @@ export function PracticePanel(props: { settings: AppSettings }): React.JSX.Eleme
     const offDelta = window.copilot.onPracticeDelta((e) => {
       if (e.practiceId !== practiceIdRef.current) return
       if (e.kind === 'question') {
+        questionStreamingRef.current = true
         setQuestionStreaming(true)
         // A new requestId starts a new question: reset the buffer.
         if (lastQuestionReqRef.current !== e.requestId) {
@@ -97,9 +103,15 @@ export function PracticePanel(props: { settings: AppSettings }): React.JSX.Eleme
       if (e.practiceId !== practiceIdRef.current) return
       setIndex(e.index)
       setQuestion(e.question)
+      questionStreamingRef.current = false
       setQuestionStreaming(false)
-      setFeedback(null)
       setEvalStreaming(false)
+      // Keep the last evaluation readable while the next question loads —
+      // wiping it on arrival left no time to act on the feedback.
+      setFeedback((cur) => {
+        if (cur) setPreviousFeedback({ index: e.index - 1, feedback: cur })
+        return null
+      })
       if (autoSpeak && ttsSupported()) {
         setSpeaking(true)
         // FEEDBACK-LOOP GUARD: while the interviewer voice plays, mute the
@@ -130,6 +142,7 @@ export function PracticePanel(props: { settings: AppSettings }): React.JSX.Eleme
     const offEvaluated = window.copilot.onPracticeEvaluated((e) => {
       if (e.practiceId !== practiceIdRef.current) return
       setFeedback(e.feedback)
+      setAwaitingEval(false)
       setEvalStreaming(false)
     })
     const offFinished = window.copilot.onPracticeFinished((e) => {
@@ -149,7 +162,16 @@ export function PracticePanel(props: { settings: AppSettings }): React.JSX.Eleme
       if (e.practiceId !== practiceIdRef.current) return
       setError(e.message)
       setQuestionStreaming(false)
+      setAwaitingEval(false)
       setEvalStreaming(false)
+      // If the FIRST question never arrived (provider failure/rate limit), the
+      // session is unusable — close it and return to setup with the reason.
+      if (!question && !feedback && questionStreamingRef.current) {
+        void window.copilot.practiceCancel({ practiceId: e.practiceId })
+        practiceIdRef.current = null
+        setPhase('setup')
+        refreshHistory()
+      }
     })
     return () => {
       offDelta()
@@ -227,6 +249,7 @@ export function PracticePanel(props: { settings: AppSettings }): React.JSX.Eleme
     if (res.ok && res.practiceId) {
       practiceIdRef.current = res.practiceId
       setPhase('live')
+      questionStreamingRef.current = true
       setQuestionStreaming(true)
     } else {
       setError(res.message ?? 'Could not start the practice interview.')
@@ -237,13 +260,17 @@ export function PracticePanel(props: { settings: AppSettings }): React.JSX.Eleme
     if (!practiceIdRef.current || !question.trim()) return
     setError(null)
     stopSpeaking()
+    setAwaitingEval(true)
+    setPreviousFeedback(null)
     const res = await window.copilot.practiceSubmit({
       practiceId: practiceIdRef.current,
       answer: answer.trim(),
       spoken: micOn || answer.trim().length > 0 && spokenThisTurnRef.current
     })
-    if (!res.ok) setError(res.message ?? 'Could not submit the answer.')
-    else {
+    if (!res.ok) {
+      setAwaitingEval(false)
+      setError(res.message ?? 'Could not submit the answer.')
+    } else {
       spokenThisTurnRef.current = false
       stopMic()
     }
@@ -279,6 +306,8 @@ export function PracticePanel(props: { settings: AppSettings }): React.JSX.Eleme
     setQuestion('')
     setAnswer('')
     setFeedback(null)
+    setPreviousFeedback(null)
+    setAwaitingEval(false)
     setPhase('setup')
     refreshHistory()
   }
@@ -448,6 +477,24 @@ export function PracticePanel(props: { settings: AppSettings }): React.JSX.Eleme
           )}
         </div>
 
+        {previousFeedback && (
+          <div className="card" style={{ opacity: 0.85 }}>
+            <div className="row">
+              <div className="section-title">Feedback on answer {previousFeedback.index}</div>
+              <span className="grow" />
+              <span className="badge accent">{previousFeedback.feedback.overall}/5 overall</span>
+            </div>
+            <div className="score-grid">
+              {previousFeedback.feedback.dimensions.map((d) => (
+                <ScoreRow key={d.dimension} name={d.dimension} score={d.score} />
+              ))}
+            </div>
+            {previousFeedback.feedback.improvements.length > 0 && (
+              <div className="hint">Improve: {previousFeedback.feedback.improvements.join(' · ')}</div>
+            )}
+          </div>
+        )}
+
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div className="iv-label">Your answer — typed or spoken</div>
           <textarea
@@ -467,11 +514,12 @@ export function PracticePanel(props: { settings: AppSettings }): React.JSX.Eleme
             )}
             {micOn && <span className="badge err">listening — your speech is transcribed into the box</span>}
             <span className="grow" />
-            {feedback === null && !evalStreaming && (
+            {feedback === null && !awaitingEval && !evalStreaming && (
               <button className="primary" disabled={!answer.trim() || questionStreaming} onClick={() => void submit()}>
                 Submit answer
               </button>
             )}
+            {awaitingEval && !evalStreaming && <span className="badge accent">waiting for the evaluation…</span>}
           </div>
           {micError && <ErrorBox>{micError}</ErrorBox>}
           {error && <ErrorBox>{error}</ErrorBox>}
