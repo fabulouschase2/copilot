@@ -179,3 +179,30 @@ Two stacked defects — reproduced live, verified fixed live:
 ## Verdict
 
 The reported critical bug is **fixed and verified with real audio in both the development build and the installed application**. The application now captures what it says it captures, shows honestly what state the audio pipeline is in (Audio diagnostics view), and never presents "Listening" without flowing audio. All 248 pre-existing tests were preserved and extended to 267.
+
+
+---
+
+# Final real-world acceptance test (v0.2.2, 2026-11-02)
+
+Run against the INSTALLED application (`Copilot-Setup-0.2.2.exe`, silently installed over 0.2.1;
+the only change is a practice-flow retry on transient 503s, found during this acceptance run).
+Provider: real Google Gemini (`gemini-3.5-flash`, OS-encrypted key). All interactions driven
+through the installed app's own UI/IPC; nothing mocked.
+
+| # | Acceptance item | Result | Evidence |
+|---|---|---|---|
+| 1 | Real system-audio transcription (installed) | **BLOCKED** — the Groq API key is still not saved (`hasCredential:false`, re-verified at acceptance time; also searched env/files — no key present to configure). Pipeline verified up to the credential boundary in the previous run (real provider answers 401, surfaced verbatim) | diagnostics + lastError |
+| 2 | Microphone transcription (independent) | **BLOCKED** — same missing credential. Mic capture itself re-verified live: session listening, chunks flowing, VAD armed | diagnostics counters |
+| 3 | Full live interview, 5+ spoken questions → answers | **BLOCKED** (needs transcription; manual-entry interview answers already PASSED in 0.2.1) | — |
+| 4 | **Complete Practice interview with evaluations + final persisted scorecard** | **PASS** — 2-question behavioral session in the installed app: Q1 (real Gemini) → typed answer → evaluation **2/5** with 5 dimensions → Q2 → answer → evaluation → **final scorecard rendered: overall 2/5** with per-dimension scores, an explainable summary (it correctly flagged that my example answers did not match the questions asked), 2 areas for improvement, per-turn review; session persisted `status: completed` with the full scorecard JSON and survived restart | UI + `listPractice` |
+| 5 | Complete Meeting recording + automatic summary | **PARTIAL** — record/start/pause/resume/mute/end verified in 0.2.1 with real mic + system audio; with an empty (silent) meeting the auto-summary correctly refuses ("No meeting transcript to summarize"); a summary over real transcribed speech remains **BLOCKED** on the credential | 0.2.1 evidence + this run |
+| 6 | TTS playback of generated questions | **PASS** (API-level) — read-aloud of the live question: utterance ran ~8 s (plausible for the text), start/end lifecycle events fired ("Stop reading" visible during, gone after), and the **feedback-loop guard engaged exactly during playback** (practice session `muted:true` while speaking, `muted:false` after, mic chunks flowing again). The actual sound was not heard by a human — that final sensory check remains for the user | live diagnostics trace |
+| 7 | Audio diagnostics states / no false Listening | **PASS** — states observed live in the installed app: NOT STARTED, WAITING FOR FIRST AUDIO, LISTENING (SILENT) (mic live, chunks flowing, no speech), ERROR (401/429/503 all surfaced verbatim), plus SPEECH + TRANSCRIBING transitions from the 0.2.1 real-audio runs. "Listening" appears only with a live session AND flowing capture; failed capture stops the session and shows the error | diagnostics polls |
+| 8 | Gemini 503 investigation + scorecard with a working provider | **Investigated & mitigated; scorecard PASS** — 503s are transient free-tier capacity errors (intermittent: identical calls succeed minutes apart; bursts cluster). Mitigation shipped in 0.2.2: the practice flow now retries 503s once with backoff (as with 429s; safe because nothing has streamed). With retries + spacing, the full practice loop completed end-to-end incl. scorecard (item 4) | code + item 4 |
+| 9 | Restart persistence | **PASS** — after full app restart: 15 practice sessions intact incl. the `completed` one with scorecard JSON (overall 2), profile "Default(1)" with its fact, meetings table intact, settings (delay=4 s, theme=dark, source=system) intact | `listPractice`/`listProfiles`/`listMeetings`/`getSettings` |
+
+**Still blocking items 1–3 and the transcript part of 5**: save the Groq API key once in
+Settings → Providers → the transcription row. The pipeline is verified end-to-end up to that
+credential (the real provider is reached and answers 401). No GitHub release was published;
+the installer exists locally as `dist/Copilot-Setup-0.2.2.exe`.

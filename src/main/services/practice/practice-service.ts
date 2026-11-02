@@ -526,7 +526,14 @@ export class PracticeService {
         return text
       } catch (err) {
         if (signal.aborted) return null
-        if (err instanceof ProviderError && err.status === 429 && attempt === 1) {
+        if (
+          err instanceof ProviderError &&
+          (err.status === 429 || err.status === 503) &&
+          attempt === 1
+        ) {
+          // 429 (quota) and 503 (transient capacity) are both retryable
+          // provider-side conditions; nothing has streamed yet, so one
+          // silent retry can never duplicate visible text.
           rateLimited = true
         } else {
           const message =
