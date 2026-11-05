@@ -62,3 +62,34 @@ describe('renderer capture contracts (regression: silent interview session)', ()
     expect(src).toContain('chunksSent')
   })
 })
+
+
+describe('renderer credential-management contracts (v0.2.3)', () => {
+  it('provider key fields use the explicit Save key control, never onBlur saves', () => {
+    const keyField = read('KeyField.tsx')
+    expect(keyField).toContain('Save key')
+    expect(keyField).toContain("saveCredential(")
+    expect(keyField).toMatch(/onKeyDown[\s\S]{0,80}save/) // Enter saves explicitly
+    expect(keyField).not.toMatch(/onBlur\s*=/) // the shipped bug: silent onBlur saves
+    // input clears only on success
+    expect(keyField).toMatch(/if \(result\.ok\)[\s\S]{0,60}setValue\(''\)/s)
+    // secret never logged
+    expect(keyField).not.toMatch(/console\.log/)
+  })
+
+  it('both provider editors use KeyField with credential badges', () => {
+    const inline = read('SetupProvidersInline.tsx')
+    expect(inline).toContain('<KeyField')
+    expect(inline).toContain('Test connection') // STT connection test
+    expect(inline).toContain('listSttProviders')
+    const setup = read('SetupPanel.tsx')
+    expect(setup).toContain('<KeyField')
+    expect(setup).not.toContain('onBlur={(e) => {') // no legacy silent saves
+  })
+
+  it('the credentials helper validates empty keys before any IPC call', () => {
+    const helper = fs.readFileSync(path.join(__dirname, '..', 'src', 'shared', 'credentials.ts'), 'utf-8')
+    expect(helper).toMatch(/Enter a key first/)
+    expect(helper).toMatch(/secret\.length === 0[\s\S]{0,300}return \{ ok: false/)
+  })
+})

@@ -137,6 +137,11 @@ const api: CopilotApi = {
   /* audio diagnostics (transformation) */
   getAudioDiagnostics: () => ipcRenderer.invoke(IPC.audioDiagnostics),
 
+  /* transcription provider key management */
+  listSttProviders: () => ipcRenderer.invoke(IPC.sttProvidersList),
+  testSttProvider: (providerId: string) =>
+    ipcRenderer.invoke(IPC.sttTest, { providerId: String(providerId).slice(0, 64) }),
+
   /* profiles (transformation) */
   listProfiles: () => ipcRenderer.invoke(IPC.profilesList),
   createProfile: (req: z.infer<typeof ProfileCreateRequestSchema>) =>

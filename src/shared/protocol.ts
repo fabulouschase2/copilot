@@ -87,6 +87,8 @@ export const IPC = {
   practiceGet: 'practice:get',
   practiceDelete: 'practice:delete',
   audioDiagnostics: 'audio:diagnostics',
+  sttProvidersList: 'stt:providers-list',
+  sttTest: 'stt:test',
   practiceDelta: 'practice:delta',
   practiceQuestion: 'practice:question',
   practiceEvaluated: 'practice:evaluated',
@@ -714,6 +716,23 @@ export const STTSettingsSchema = z.object({
 })
 export type STTSettings = z.infer<typeof STTSettingsSchema>
 
+/** STT provider metadata safe to expose to the renderer (no secrets). */
+export interface STTProviderInfo {
+  id: string
+  label: string
+  kind: 'stt-segment' | 'stt-stream'
+  enabled: boolean
+  model: string
+  language: string
+  baseUrl: string
+  /** True when a credential for this provider exists in secure storage. */
+  hasCredential: boolean
+}
+
+export const STTTestRequestSchema = z.object({
+  providerId: z.string().min(1).max(64)
+})
+
 export const AppSettingsSchema = z.object({
   providers: z.array(ProviderConfigSchema).max(20).default([]),
   activeProviderId: z.string().min(1).max(64).nullable().default(null),
@@ -1015,6 +1034,9 @@ export interface CopilotApi {
   onChatError(cb: (e: z.infer<typeof ChatErrorEventSchema>) => void): () => void
   /* audio diagnostics */
   getAudioDiagnostics(): Promise<AudioDiagnosticsInfo>
+  /* transcription provider key management */
+  listSttProviders(): Promise<{ providers: STTProviderInfo[] }>
+  testSttProvider(providerId: string): Promise<ProviderTestResult>
   /* profiles */
   listProfiles(): Promise<{ profiles: ProfileInfo[] }>
   createProfile(req: z.infer<typeof ProfileCreateRequestSchema>): Promise<{ ok: boolean; profileId?: string; message?: string }>

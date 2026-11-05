@@ -5,11 +5,11 @@ interviews with scorecards, complete meeting notes, live transcription, screen u
 multi-provider streaming chat — with user-controlled context, personal profiles, and local-first
 storage. Built with Electron 38 + TypeScript + React 19.
 
-## Status (0.2.1 — audio-pipeline fix + full functionality audit)
+## Status (0.2.2 — credential UI + acceptance run)
 
 | Area | Scope | Status |
 |---|---|---|
-| Stages 1–10 | Original roadmap (research → architecture → providers → transcription → screen → context → modes → persistence → security) | ✅ implemented, 248 tests |
+| Stages 1–10 | Original roadmap (research → architecture → providers → transcription → screen → context → modes → persistence → security) | ✅ implemented, 282 tests |
 | Transformation | Poisely-inspired product rebuild: new design system + shell, Interview / Practice / Meetings / Chat navigation | ✅ implemented |
 | Practice interviews | 7 interview types, difficulty + length, spoken questions (TTS), typed or spoken answers, rubric evaluation per answer, final scorecard with per-dimension scores and improved answers, session history | ✅ implemented |
 | Meetings | Independent before/during/after lifecycle: title + audio source + language + provider display → recording with pause/resume/mute and timestamped, source-attributed transcript → auto-generated summary on end, editable notes, structured action items, save/search/reopen/delete/export, ask questions about saved meetings | ✅ implemented |
@@ -17,7 +17,7 @@ storage. Built with Electron 38 + TypeScript + React 19.
 | Session isolation | Purpose-tagged transcription sessions (`interview` / `meeting` / `practice`) — transcripts never leak across workflows | ✅ implemented |
 | Packaging | NSIS installer built, installed and launch-verified (`dist/Copilot-Setup-0.2.1.exe`) | ✅ verified |
 | Audio pipeline | **Fixed & verified with real audio on Windows (dev + installed)**: renderer capture wiring + Electron getDisplayMedia permission flow; honest state reporting via the new Audio diagnostics view | ✅ real-audio verified |
-| Transcription E2E | Real STT requests reach the provider; results **BLOCKED on the user saving a Groq API key** (the provider returns 401, surfaced verbatim) | BLOCKED (one-time user action) |
+| Transcription E2E | Real STT requests reach the provider; results **BLOCKED on the user saving a Groq API key** (the provider returns 401, surfaced verbatim). Pipeline verified end-to-end up to the credential boundary; once a key is saved, transcription works. | BLOCKED (one-time user action) |
 | Speaker diarization | Not implemented — segments are labeled by capture source (Mic vs System) only, never presented as speaker identities | — honest exclusion |
 | Real-audio E2E | Blocked on the user configuring an STT credential (pipeline covered by integration tests with mock STT) | BLOCKED (user action) |
 
@@ -36,7 +36,7 @@ Requirements: Windows 10/11 (primary), Node.js ≥ 20, npm ≥ 10.
 npm install
 npm run dev        # launch the app with hot reload
 npm run build      # production build (out/)
-npm test           # unit tests (vitest, 267 tests)
+npm test           # unit tests (vitest, 282 tests)
 npm run typecheck  # tsc for main + renderer
 npm run dist       # production build + NSIS installer (dist/)
 ```
@@ -137,5 +137,5 @@ src/shared/      IPC contract (zod schemas) — single source of truth
 src/main/        window, IPC, services (chat/STT/modes/practice/context/screen/storage)
 src/preload/     typed contextBridge (bundled for sandbox; no Node in renderer)
 src/renderer/    React UI (interview-first shell: Interview · Practice · Meetings · Chat)
-tests/           vitest unit tests (267 as of 0.2.1)
+tests/           vitest unit tests (282 as of 0.2.2)
 ```

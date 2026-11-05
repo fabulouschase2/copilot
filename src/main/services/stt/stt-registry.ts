@@ -22,14 +22,52 @@ export class SttRegistry {
     private creds: CredentialStore
   ) {}
 
-  listProviders(): Array<{ id: string; label: string; kind: string; enabled: boolean; hasCredential: boolean }> {
+  listProviders(): Array<{
+    id: string
+    label: string
+    kind: 'stt-segment' | 'stt-stream'
+    enabled: boolean
+    model: string
+    language: string
+    baseUrl: string
+    hasCredential: boolean
+  }> {
     return this.settings.get().stt.providers.map((p) => ({
       id: p.id,
       label: p.label,
       kind: p.kind,
       enabled: p.enabled,
+      model: p.model,
+      language: p.language,
+      baseUrl: p.baseUrl,
       hasCredential: this.creds.has(p.id)
     }))
+  }
+
+  /** Build the adapter for ONE specific provider (used by Test connection). */
+  resolveById(providerId: string): { adapter: SttAdapter; label: string } | null {
+    const chosen = this.settings.get().stt.providers.find((p) => p.id === providerId)
+    if (!chosen) return null
+    const apiKey = this.creds.get(chosen.id) ?? ''
+    const adapter: SttAdapter =
+      chosen.kind === 'stt-segment'
+        ? new SegmentStt({
+            id: chosen.id,
+            label: chosen.label,
+            baseUrl: chosen.baseUrl,
+            apiKey,
+            model: chosen.model,
+            language: chosen.language
+          })
+        : new DeepgramStt({
+            id: chosen.id,
+            label: chosen.label,
+            baseUrl: chosen.baseUrl,
+            apiKey,
+            model: chosen.model,
+            language: chosen.language
+          })
+    return { adapter, label: chosen.label }
   }
 
   resolveActive(): ResolvedStt | null {

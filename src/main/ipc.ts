@@ -40,6 +40,7 @@ import {
   ScreenCaptureRequestSchema,
   ScreenSourcesRequestSchema,
   SessionPurposeSchema,
+  STTTestRequestSchema,
   TranscriptAudioChunkSchema,
   TranscriptBeginRequestSchema,
   TranscriptMuteRequestSchema,
@@ -134,6 +135,17 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   })
 
   ipcMain.handle(IPC.providersList, (): ProviderInfo[] => registry.list())
+
+  // Transcription provider key management: list (with hasCredential, no
+  // secrets) + per-provider connection test using the stored credential.
+  ipcMain.handle(IPC.sttProvidersList, () => ({ providers: sttRegistry.listProviders() }))
+  ipcMain.handle(IPC.sttTest, async (_e, raw: unknown): Promise<ProviderTestResult> => {
+    const parsed = STTTestRequestSchema.safeParse(typeof raw === 'object' && raw !== null ? raw : {})
+    if (!parsed.success) return { ok: false, message: 'Invalid request', latencyMs: null }
+    const resolved = sttRegistry.resolveById(parsed.data.providerId)
+    if (!resolved) return { ok: false, message: 'Unknown provider id', latencyMs: null }
+    return resolved.adapter.testConnection()
+  })
 
   ipcMain.handle(IPC.providersTest, async (_e, raw: unknown): Promise<ProviderTestResult> => {
     const parsed = CredentialSetRequestSchema.pick({ providerId: true }).safeParse(

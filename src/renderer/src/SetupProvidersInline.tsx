@@ -1,5 +1,13 @@
-import { useState } from 'react'
-import { AppSettings, ProviderConfig, STTProvider } from '../../shared/protocol'
+import { useCallback, useEffect, useState } from 'react'
+import { AppSettings, ProviderConfig, STTProvider, STTProviderInfo } from '../../shared/protocol'
+import { KeyField } from './KeyField'
+
+/**
+ * Provider rows for Setup, with explicit credential management:
+ * Save key (click-only), Show/Hide, Saved/failed feedback, key-saved badge
+ * and per-provider Test connection. Credentials travel only through
+ * window.copilot.setCredential → the OS-encrypted CredentialStore.
+ */
 
 /** Compact chat-provider rows for Setup (full editing preserved). */
 export function SetupProvidersInline(props: {
@@ -7,7 +15,14 @@ export function SetupProvidersInline(props: {
   onChange: (s: AppSettings) => void
 }): React.JSX.Element {
   const { settings, onChange } = props
-  const [keyInput, setKeyInput] = useState<Record<string, string>>({})
+  const [credStatus, setCredStatus] = useState<Record<string, boolean>>({})
+
+  const refreshCreds = useCallback((): void => {
+    void window.copilot.listProviders().then((list) => {
+      setCredStatus(Object.fromEntries(list.map((p) => [p.id, p.hasCredential])))
+    })
+  }, [])
+  useEffect(refreshCreds, [refreshCreds])
 
   const patch = (id: string, p: Partial<ProviderConfig>): void =>
     onChange({ ...settings, providers: settings.providers.map((x) => (x.id === id ? { ...x, ...p } : x)) })
@@ -15,44 +30,34 @@ export function SetupProvidersInline(props: {
   return (
     <>
       {settings.providers.map((p) => (
-        <div key={p.id} className="row compact">
-          <input
-            type="radio"
-            name="active-provider"
-            checked={settings.activeProviderId === p.id}
-            onChange={() => onChange({ ...settings, activeProviderId: p.id })}
-            title="Set active"
-          />
-          <input className="grow" type="text" value={p.label} onChange={(e) => patch(p.id, { label: e.target.value })} />
-          <input
-            type="text"
-            value={p.model}
-            placeholder="model"
-            style={{ width: 120 }}
-            onChange={(e) => patch(p.id, { model: e.target.value })}
-          />
-          <label title="Model accepts images">
-            <input type="checkbox" checked={p.vision} onChange={(e) => patch(p.id, { vision: e.target.checked })} /> 👁
-          </label>
-          <label title="Enabled">
-            <input type="checkbox" checked={p.enabled} onChange={(e) => patch(p.id, { enabled: e.target.checked })} /> on
-          </label>
-          <input
-            type="password"
-            placeholder="key"
-            style={{ width: 110 }}
-            value={keyInput[p.id] ?? ''}
-            onChange={(e) => setKeyInput((k) => ({ ...k, [p.id]: e.target.value }))}
-            onBlur={(e) => {
-              if (e.target.value) {
-                void window.copilot.setCredential(p.id, e.target.value)
-                setKeyInput((k) => ({ ...k, [p.id]: '' }))
-              }
-            }}
-          />
-          <button className="meta-btn" onClick={() => onChange({ ...settings, providers: settings.providers.filter((x) => x.id !== p.id) })}>
-            ✕
-          </button>
+        <div key={p.id} className="card" style={{ gap: 6 }}>
+          <div className="row compact" style={{ borderBottom: 'none' }}>
+            <input
+              type="radio"
+              name="active-provider"
+              checked={settings.activeProviderId === p.id}
+              onChange={() => onChange({ ...settings, activeProviderId: p.id })}
+              title="Set active"
+            />
+            <input className="grow" type="text" value={p.label} onChange={(e) => patch(p.id, { label: e.target.value })} />
+            <input
+              type="text"
+              value={p.model}
+              placeholder="model"
+              style={{ width: 120 }}
+              onChange={(e) => patch(p.id, { model: e.target.value })}
+            />
+            <label title="Model accepts images">
+              <input type="checkbox" checked={p.vision} onChange={(e) => patch(p.id, { vision: e.target.checked })} /> 👁
+            </label>
+            <label title="Enabled">
+              <input type="checkbox" checked={p.enabled} onChange={(e) => patch(p.id, { enabled: e.target.checked })} /> on
+            </label>
+            <button className="meta-btn" onClick={() => onChange({ ...settings, providers: settings.providers.filter((x) => x.id !== p.id) })}>
+              ✕
+            </button>
+          </div>
+          <KeyField providerId={p.id} hasCredential={credStatus[p.id] ?? false} onSaved={refreshCreds} />
         </div>
       ))}
       <button
@@ -81,43 +86,64 @@ export function SetupProvidersInline(props: {
   )
 }
 
-/** Compact STT-provider rows for Setup. */
+/** Compact STT-provider rows for Setup, with key management + connection test. */
 export function SetupSttInline(props: {
   settings: AppSettings
   onChange: (s: AppSettings) => void
 }): React.JSX.Element {
   const { settings, onChange } = props
-  const [keyInput, setKeyInput] = useState<Record<string, string>>({})
+  const [infos, setInfos] = useState<Record<string, STTProviderInfo>>({})
+  const [tests, setTests] = useState<Record<string, { result?: import('../../shared/protocol').ProviderTestResult; busy?: boolean }>>({})
+
+  const refreshInfos = useCallback((): void => {
+    void window.copilot.listSttProviders().then((res) => {
+      setInfos(Object.fromEntries(res.providers.map((p) => [p.id, p])))
+    })
+  }, [])
+  useEffect(refreshInfos, [refreshInfos])
 
   const patch = (id: string, p: Partial<STTProvider>): void =>
     onChange({ ...settings, stt: { ...settings.stt, providers: settings.stt.providers.map((x) => (x.id === id ? { ...x, ...p } : x)) } })
 
+  const testConnection = async (id: string): Promise<void> => {
+    setTests((t) => ({ ...t, [id]: { busy: true } }))
+    const result = await window.copilot.testSttProvider(id)
+    setTests((t) => ({ ...t, [id]: { result } }))
+  }
+
   return (
     <>
       {settings.stt.providers.map((p) => (
-        <div key={p.id} className="row compact">
-          <input type="radio" name="active-stt" checked={settings.stt.activeSttProviderId === p.id} onChange={() => onChange({ ...settings, stt: { ...settings.stt, activeSttProviderId: p.id } })} title="Set active" />
-          <input className="grow" type="text" value={p.label} onChange={(e) => patch(p.id, { label: e.target.value })} />
-          <input type="text" value={p.model} placeholder="model" style={{ width: 110 }} onChange={(e) => patch(p.id, { model: e.target.value })} />
-          <label title="Enabled">
-            <input type="checkbox" checked={p.enabled} onChange={(e) => patch(p.id, { enabled: e.target.checked })} /> on
-          </label>
-          <input
-            type="password"
-            placeholder="key"
-            style={{ width: 110 }}
-            value={keyInput[p.id] ?? ''}
-            onChange={(e) => setKeyInput((k) => ({ ...k, [p.id]: e.target.value }))}
-            onBlur={(e) => {
-              if (e.target.value) {
-                void window.copilot.setCredential(p.id, e.target.value)
-                setKeyInput((k) => ({ ...k, [p.id]: '' }))
-              }
-            }}
-          />
-          <button className="meta-btn" onClick={() => onChange({ ...settings, stt: { ...settings.stt, providers: settings.stt.providers.filter((x) => x.id !== p.id) } })}>
-            ✕
-          </button>
+        <div key={p.id} className="card" style={{ gap: 6 }}>
+          <div className="row compact" style={{ borderBottom: 'none' }}>
+            <input
+              type="radio"
+              name="active-stt"
+              checked={settings.stt.activeSttProviderId === p.id}
+              onChange={() => onChange({ ...settings, stt: { ...settings.stt, activeSttProviderId: p.id } })}
+              title="Set active"
+            />
+            <input className="grow" type="text" value={p.label} onChange={(e) => patch(p.id, { label: e.target.value })} />
+            <input type="text" value={p.model} placeholder="model" style={{ width: 110 }} onChange={(e) => patch(p.id, { model: e.target.value })} />
+            <label title="Enabled">
+              <input type="checkbox" checked={p.enabled} onChange={(e) => patch(p.id, { enabled: e.target.checked })} /> on
+            </label>
+            <button className="meta-btn" onClick={() => onChange({ ...settings, stt: { ...settings.stt, providers: settings.stt.providers.filter((x) => x.id !== p.id) } })}>
+              ✕
+            </button>
+          </div>
+          <KeyField providerId={p.id} hasCredential={infos[p.id]?.hasCredential ?? false} onSaved={refreshInfos} />
+          <div className="row compact" style={{ borderBottom: 'none' }}>
+            <button className="secondary" disabled={tests[p.id]?.busy} onClick={() => void testConnection(p.id)}>
+              {tests[p.id]?.busy ? 'Testing…' : 'Test connection'}
+            </button>
+            {tests[p.id]?.result && (
+              <span className={`badge ${tests[p.id]!.result!.ok ? 'ok' : 'err'}`}>
+                {tests[p.id]!.result!.message}
+                {tests[p.id]!.result!.latencyMs !== null ? ` · ${tests[p.id]!.result!.latencyMs} ms` : ''}
+              </span>
+            )}
+          </div>
         </div>
       ))}
       <button

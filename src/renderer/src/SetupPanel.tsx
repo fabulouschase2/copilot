@@ -7,6 +7,7 @@ import {
   ProviderInfo
 } from '../../shared/protocol'
 import { SetupProvidersInline, SetupSttInline } from './SetupProvidersInline'
+import { KeyField } from './KeyField'
 
 /**
  * Settings — configuration surface (transformation rebuild).
@@ -108,12 +109,6 @@ export function SetupPanel(props: {
     const res = await window.copilot.deleteProfile({ profileId })
     if (!res.ok) setPersistMsg(res.message ?? 'Could not delete the profile.')
     refresh()
-  }
-
-  const saveKey = async (id: string, secret: string): Promise<void> => {
-    if (!secret) return
-    const res = await window.copilot.setCredential(id, secret)
-    if (!res.ok) setPersistMsg(res.message ?? 'Could not store key')
   }
 
   const testProvider = async (id: string): Promise<void> => {
@@ -370,17 +365,7 @@ export function SetupPanel(props: {
                   </span>
                 )}
               </div>
-              <div className="row">
-                <input
-                  className="grow"
-                  type="password"
-                  placeholder="API key (stored OS-encrypted)"
-                  onChange={(e) => setPersistMsg('')}
-                  onBlur={(e) => {
-                    if (e.target.value) void saveKey(p.id, e.target.value).then(() => refresh())
-                  }}
-                />
-              </div>
+              <KeyField providerId={p.id} hasCredential={p.hasCredential} onSaved={refresh} />
             </div>
           ))}
           <div className="card">

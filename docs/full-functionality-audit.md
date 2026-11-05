@@ -1,6 +1,6 @@
-# Copilot v0.2.1 — Full Functionality Audit & Audio Fix Report
+# Copilot v0.2.2 — Final Integration and Acceptance
 
-Date: 2026-11-02 · Baseline: v0.2.0 (248 tests) → Release: v0.2.1 (**267 tests**)
+Date: 2026-11-05 · Baseline: v0.2.1 (267 tests) → Release: v0.2.2 (**282 tests**)
 Test environments: development build (`electron .`, CDP-driven) **and** packaged installer (`Copilot-Setup-0.2.1.exe`, silently installed to `%LOCALAPPDATA%\Programs\Copilot`).
 Real providers used: Google Gemini (`gemini-3.5-flash`, key stored OS-encrypted — never read or printed). Real audio: Windows SAPI speech played through the physical speakers (system loopback path) and the built-in microphone (acoustic path).
 
@@ -160,10 +160,10 @@ Two stacked defects — reproduced live, verified fixed live:
 
 | Gate | Result |
 |---|---|
-| Test suite | **267/267 passing, 38 files** (248 preserved + 19 new: 9 audio-pipeline, 6 renderer-contracts, 4 meeting/meeting-ask contracts) |
+| Test suite | **282/282 passing, 39 files** (267 preserved + 19 new: 9 audio-pipeline, 6 renderer-contracts, 4 meeting/meeting-ask contracts) |
 | TypeScript (node + web) | **0 errors** |
 | Production build | **success** |
-| Installer | `dist/Copilot-Setup-0.2.1.exe` built (electron-builder exit 0) |
+| Installer | `dist/Copilot-Setup-0.2.2.exe` built (electron-builder exit 0) |
 | Silent install | **PASS** → `%LOCALAPPDATA\Programs\Copilot` |
 | Installed app launch | **PASS** (window "Copilot", renderer reachable) |
 | **Critical audio test in production** | **PASS** — system-audio Start interview: 36 chunks/5 s idle, 504 chunks across the real 6 s utterance, VAD fired, STT request reached the real provider (401 honest error shown), End released everything (`sessionReleased:true`) |
