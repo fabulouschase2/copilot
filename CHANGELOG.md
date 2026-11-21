@@ -2,6 +2,21 @@
 
 All notable user-facing changes. Versions follow the app's `package.json`.
 
+## 0.5.0
+
+### Added
+
+- **Gemini live integration**: text and vision verified against the real API with a configured key.
+  Vision reads a captured screenshot; the model is discovered from the API because Google retired
+  older names. Credentials are OS-encrypted and never written to settings, logs or source.
+- **Persistent conversation history**: chats save automatically, are searchable (title and message
+  text), and can be renamed, pinned, archived, deleted or continued. Adds SQLite schema v6.
+
+### Notes
+
+- Conversation titles come from the first message rather than another model call, so saving works
+  even when every provider is unavailable.
+
 ## 0.4.0
 
 ### Added
