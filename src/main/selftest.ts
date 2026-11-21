@@ -1598,3 +1598,273 @@ export async function runScreenTranslationSelfTest(): Promise<void> {
   console.log('[selftest]', JSON.stringify(report))
   if (!win.isDestroyed()) win.destroy()
 }
+
+/**
+ * 0.5.0 live Gemini verification.
+ *
+ * The key is read from the COPILOT_GEMINI_KEY environment variable, never from
+ * source, argv or a committed file. It is stored through the app's own
+ * CredentialStore (OS-encrypted) and never printed: every logged string is
+ * passed through a redactor first.
+ *
+ * Verifies: model discovery, text generation, and VISION on a real captured
+ * window, then writes the working provider row into settings.
+ */
+export async function runGeminiLiveSelfTest(): Promise<void> {
+  try {
+    await geminiLiveInner()
+  } catch (err) {
+    // Never let a harness crash hide the result; redact anything key-shaped.
+    const message = (err instanceof Error ? err.message : String(err)).replace(/AQ\.[A-Za-z0-9._-]+/g, '[redacted]')
+    // eslint-disable-next-line no-console
+    console.log('[selftest]', JSON.stringify({ ok: false, fatal: message.slice(0, 300) }))
+  }
+}
+
+async function geminiLiveInner(): Promise<void> {
+  const os = await import('node:os')
+  const fs = await import('node:fs')
+  const pathMod = await import('node:path')
+  const stepFile = pathMod.join(os.tmpdir(), 'copilot-gemini-steps.log')
+  try {
+    fs.writeFileSync(stepFile, '', 'utf-8')
+  } catch {
+    /* best-effort */
+  }
+  const step = (name: string, extra?: unknown): void => {
+    try {
+      fs.appendFileSync(
+        stepFile,
+        `${new Date().toISOString()} ${name}${extra === undefined ? '' : ' ' + JSON.stringify(extra)}\n`,
+        'utf-8'
+      )
+    } catch {
+      /* best-effort */
+    }
+  }
+  step('start')
+  const electron = (await import('electron')) as typeof import('electron')
+  const { OpenAICompatibleProvider } = await import('./services/providers/openai-compatible')
+  const { SettingsStore } = await import('./services/settings-store')
+  const { CredentialStore } = await import('./services/credential-store')
+  const { AppSettingsSchema } = await import('../shared/protocol')
+
+  // The app quits when the last window closes; keep one alive so a mid-test
+  // window destruction cannot abort the verification.
+  const keeper = new electron.BrowserWindow({ show: false, width: 2, height: 2 })
+  const key = (process.env['COPILOT_GEMINI_KEY'] ?? '').trim()
+  const report: Record<string, unknown> = {}
+  if (!key) {
+    report.ok = false
+    report.message = 'COPILOT_GEMINI_KEY is not set.'
+    // eslint-disable-next-line no-console
+    console.log('[selftest]', JSON.stringify(report))
+    return
+  }
+  const redact = (s: string): string => (key ? s.split(key).join('[redacted]') : s)
+  const baseUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/'
+
+  // 1. Discover models with the key (also validates the key itself).
+  let modelIds: string[] = []
+  try {
+    const res = await fetch(`${baseUrl}models`, {
+      headers: { Authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(20_000)
+    })
+    report.modelsStatus = res.status
+    if (res.ok) {
+      const body = (await res.json()) as { data?: Array<{ id?: string }> }
+      modelIds = (body.data ?? [])
+        .map((m) => String(m.id ?? ''))
+        .filter((id) => id.startsWith('models/') || id.length > 0)
+        .map((id) => id.replace(/^models\//, ''))
+    } else {
+      report.modelsError = redact((await res.text()).slice(0, 200))
+    }
+  } catch (err) {
+    report.modelsError = redact(err instanceof Error ? err.message : String(err))
+  }
+  report.modelCount = modelIds.length
+  report.modelsSample = modelIds.slice(0, 8)
+  step('models', { status: report.modelsStatus, count: modelIds.length })
+
+  // Model names move fast (2.5-flash was retired for new keys mid-verification),
+  // so candidates come from the live model list and are tried until one works.
+  const versionOf = (id: string): number => {
+    const m = /gemini-(\d+(?:\.\d+)?)/i.exec(id)
+    return m ? Number.parseFloat(m[1]) : 0
+  }
+  const preferred = [
+    'gemini-flash-lite-latest',
+    'gemini-flash-latest',
+    'gemini-3.8-flash',
+    'gemini-3.7-flash',
+    'gemini-3.6-flash'
+  ]
+  const stable = [...new Set(modelIds)]
+    .filter(
+      (id) =>
+        /^gemini-/i.test(id) &&
+        !/tts|image|embedding|aqa|learnlm|native-audio|argon|carbon|hydrogen|neon|live|thinking|exp|preview/i.test(
+          id
+        )
+    )
+    .sort((a, b) => {
+      const byVersion = versionOf(b) - versionOf(a)
+      if (byVersion !== 0) return byVersion
+      return Number(/flash/i.test(b)) - Number(/flash/i.test(a))
+    })
+  const candidates = [
+    ...preferred.filter((m) => modelIds.includes(m)),
+    ...stable.filter((m) => !preferred.includes(m))
+  ].slice(0, 6)
+  report.candidates = candidates
+
+  // A fresh provider per attempt: a cancelled stream must not poison the next try.
+  const workingProvider = (model: string): InstanceType<typeof OpenAICompatibleProvider> =>
+    new OpenAICompatibleProvider({
+      id: 'gemini',
+      label: 'Google Gemini',
+      baseUrl,
+      apiKey: key,
+      model,
+      vision: true
+    })
+
+  // 2. Text generation: first candidate that answers wins.
+  let chosen = ''
+  let text = ''
+  const attempts: Array<{ model: string; ok: boolean; error?: string }> = []
+  for (const candidate of candidates) {
+    // Two attempts per model: the API returns transient 429/503 under load.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const t0 = Date.now()
+      let candidateText = ''
+      try {
+        for await (const chunk of workingProvider(candidate).chatStream({
+          model: candidate,
+          messages: [{ role: 'user', content: 'Reply with exactly: COPILOT OK' }],
+          timeoutMs: 60_000,
+          maxTokens: 64
+        })) {
+          if (chunk.type === 'delta') candidateText += chunk.text
+        }
+        if (candidateText.trim().length > 0) {
+          chosen = candidate
+          text = candidateText
+          attempts.push({ model: candidate, ok: true })
+          report.textLatencyMs = Date.now() - t0
+          break
+        }
+        attempts.push({ model: candidate, ok: false, error: 'empty response' })
+      } catch (err) {
+        const message = redact(err instanceof Error ? err.message : String(err))
+        attempts.push({ model: candidate, ok: false, error: message.slice(0, 140) })
+        const transient = /429|503|UNAVAILABLE|high demand/i.test(message)
+        if (!transient || attempt === 1) break
+        await new Promise((r) => setTimeout(r, 1_200))
+      }
+      if (chosen) break
+    }
+    if (chosen) break
+  }
+  report.attempts = attempts
+  report.model = chosen || null
+  report.textOk = text.trim().length > 0
+  if (report.textOk) report.textSample = redact(text.trim().slice(0, 80))
+  step('text', { ok: report.textOk, model: chosen })
+
+  // 3. Vision on a real captured window.
+  const win = new electron.BrowserWindow({
+    width: 820,
+    height: 240,
+    x: 120,
+    y: 120,
+    frame: false,
+    show: true,
+    backgroundColor: '#ffffff',
+    title: 'VISION SELFTEST',
+    webPreferences: { sandbox: true, contextIsolation: true }
+  })
+  const html = encodeURIComponent(
+    '<body style="margin:0;background:#ffffff;color:#111;font:30px Segoe UI;padding:28px">' +
+      '<div>QUARTERLY REVENUE: 4.2 MILLION</div>' +
+      '<div>Region: EMEA. Status: ON TRACK</div></body>'
+  )
+  await win.loadURL(`data:text/html;charset=utf-8,${html}`)
+  await new Promise((r) => setTimeout(r, 900))
+  // Proven capture path (same as the screen-translation test).
+  const sources = await electron.desktopCapturer.getSources({
+    types: ['window'],
+    thumbnailSize: { width: 900, height: 300 }
+  })
+  const source = sources.find((s) => s.name.includes('VISION SELFTEST'))
+  const jpeg = source ? source.thumbnail.toJPEG(85).toString('base64') : ''
+  report.visionSourceFound = Boolean(source)
+  if (!win.isDestroyed()) win.destroy()
+  step('captured', { found: Boolean(source), bytes: jpeg.length })
+
+  let visionText = ''
+  try {
+    if (!chosen) throw new Error('no Gemini model answered the text probe')
+    for await (const chunk of workingProvider(chosen).chatStream({
+      model: chosen,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Read the screenshot and state the revenue figure and the status verbatim.' },
+            { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${jpeg}` } }
+          ]
+        }
+      ],
+      timeoutMs: 90_000,
+      maxTokens: 120
+    })) {
+      if (chunk.type === 'delta') visionText += chunk.text
+    }
+    report.visionOk = visionText.trim().length > 0
+    report.visionSample = redact(visionText.trim().slice(0, 200))
+    report.visionSawRevenue = /4\.2/i.test(visionText)
+    report.visionSawStatus = /on track/i.test(visionText)
+  } catch (err) {
+    report.visionOk = false
+    report.visionError = redact(err instanceof Error ? err.message : String(err))
+  }
+  step('vision', { ok: report.visionOk })
+
+  // 4. Persist the working provider + credential through the app's own stores.
+  const userData = electron.app.getPath('userData')
+  const settings = SettingsStore.forUserData(userData)
+  const creds = CredentialStore.forUserData(userData, electron.safeStorage)
+  try {
+    creds.set('gemini', key)
+    const current = settings.get()
+    const row = {
+      id: 'gemini',
+      label: 'Google Gemini',
+      kind: 'openai-compatible' as const,
+      baseUrl,
+      model: chosen || candidates[0] || 'gemini-3.8-flash',
+      vision: true,
+      enabled: true
+    }
+    const next = AppSettingsSchema.parse({
+      ...current,
+      providers: [...current.providers.filter((p) => p.id !== 'gemini'), row],
+      activeProviderId: current.activeProviderId ?? 'gemini',
+      // Screen analysis is private; the user asked for cloud vision explicitly.
+      allowCloudPrivate: true
+    })
+    settings.set(next)
+    report.credentialStored = creds.has('gemini')
+    report.providerConfigured = settings.get().providers.some((p) => p.id === 'gemini')
+    report.allowCloudPrivate = settings.get().allowCloudPrivate
+  } catch (err) {
+    report.storeError = redact(err instanceof Error ? err.message : String(err))
+  }
+
+  // eslint-disable-next-line no-console
+  console.log('[selftest]', JSON.stringify(report))
+  if (!keeper.isDestroyed()) keeper.destroy()
+}

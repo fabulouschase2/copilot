@@ -54,6 +54,44 @@ drafting and résumé fact extraction.
 
 ## Not verified
 
-- A successful Gemini generation (needs the key).
-- Gemini vision/screen analysis (needs a key and a vision-capable model).
-- Rate-limit behaviour (429) against the real Gemini endpoint.
+- Rate-limit behaviour beyond the observed 429s (no long soak test).
+- Gemini streaming cancellation under load.
+
+## Live verification (0.5.0, real key)
+
+`COPILOT_SELFTEST=gemini-live` with the key supplied out-of-band (environment variable, never
+source or argv):
+
+```json
+{"modelsStatus":200,"modelCount":65,
+ "candidates":["gemini-flash-lite-latest","gemini-flash-latest","gemini-3.8-flash","gemini-3.7-flash"],
+ "attempts":[{"model":"gemini-flash-lite-latest","ok":true}],
+ "model":"gemini-flash-lite-latest","textOk":true,"textSample":"COPILOT OK","textLatencyMs":590,
+ "visionOk":true,"visionSample":"- **Revenue:** 4.2 MILLION\n- **Status:** ON TRACK",
+ "visionSawRevenue":true,"visionSawStatus":true,
+ "credentialStored":true,"providerConfigured":true,"allowCloudPrivate":true}
+```
+
+- Text generation: verified ("COPILOT OK", 590 ms).
+- **Vision: verified** against a real captured window — read both the revenue figure and the
+  status verbatim, and both assertions passed.
+- Credential stored encrypted (208-byte entry; the file contains no plaintext key).
+- Provider row written: `gemini-flash-lite-latest`, vision enabled, active provider, hybrid mode.
+
+### Model names move fast
+
+During this verification Google **retired `gemini-2.5-flash` for new keys** (404 pointing at
+`gemini-3.8-flash`), `gemini-3.8-flash` was returning `503 UNAVAILABLE` under load, and
+`gemini-2.5-pro` was also retired. The harness discovers models from `/models` and retries
+transient 429/503 across candidates; the first that answers is what gets saved.
+
+If a model stops working, pick another in Settings → Providers; the app surfaces the provider's
+message instead of guessing.
+
+## Key handling
+
+- The key is entered in Settings (or supplied to the verification harness via env var).
+- It is written only through `CredentialStore` (OS-encrypted, DPAPI on Windows).
+- It never appears in `settings.json`, source, logs or commits; the harness redacts key-shaped
+  strings from everything it prints.
+- Verified: repository search finds no key, and the credential file contains no plaintext.

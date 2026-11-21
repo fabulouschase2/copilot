@@ -272,6 +272,27 @@ providers named, copy, and send-to-overlay. History: last 20 in memory. 14 tests
 
 Full suite after these phases: **402 / 402 passed** (47 files); typecheck and build clean.
 
+## 0.5.0 phase 1 — live Gemini verification (delivered)
+
+Key supplied out-of-band, stored only through the OS-encrypted credential store. Nothing written
+to source, settings or logs; repository search finds no key and the credential file has no
+plaintext.
+
+Verified live (`COPILOT_SELFTEST=gemini-live`):
+
+- `/models` returns 200 with 65 models for this key.
+- Text: “COPILOT OK” in 590 ms (`gemini-flash-lite-latest`).
+- **Vision: reads a real captured window** — “Revenue: 4.2 MILLION / Status: ON TRACK”, both
+  assertions true.
+- Provider row persisted (vision enabled, active, hybrid), `allowCloudPrivate` enabled at the
+  user's request so screen analysis may use Gemini.
+
+Discovery: Google retired `gemini-2.5-flash` and `gemini-2.5-pro` for new keys mid-work, and
+`gemini-3.8-flash` was returning 503 under load. The harness now discovers models from the API and
+retries transient 429/503 with a fallback across candidates; the working model is what gets saved.
+
+Evidence: `docs/providers.md`.
+
 ## Remaining phases
 
 Tracked in `FEATURE_STATUS.md`. Cloud sync, billing and the phone companion require

@@ -137,6 +137,13 @@ if (!SINGLE_INSTANCE_LOCK) {
       })
       return
     }
+    if (process.env['COPILOT_SELFTEST'] === 'gemini-live') {
+      void import('./selftest').then(async ({ runGeminiLiveSelfTest }) => {
+        await runGeminiLiveSelfTest()
+        app.exit(0)
+      })
+      return
+    }
     if (process.env['COPILOT_SELFTEST'] === 'provider-setup') {
       void import('./selftest').then(async ({ runProviderSetup }) => {
         await runProviderSetup()
