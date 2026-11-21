@@ -53,6 +53,8 @@ import { ProviderRegistry } from './services/provider-registry'
 import { SettingsStore } from './services/settings-store'
 import { SttRegistry } from './services/stt/stt-registry'
 import type { PracticeService } from './services/practice/practice-service'
+import type { OverlayController } from './overlay-window'
+import { OverlayContentSchema, OverlaySetRequestSchema } from '../shared/protocol'
 
 export interface IpcDeps {
   settings: SettingsStore
@@ -66,6 +68,7 @@ export interface IpcDeps {
   modes: ModesService
   practice: PracticeService
   permissionGate: PermissionGate
+  overlay: OverlayController
   getWindow: () => BrowserWindow | null
   persistence: {
     status: () => import('../shared/protocol').ContextPersistenceStatus
@@ -80,18 +83,51 @@ export interface IpcDeps {
   getAudioDiagnostics: () => import('../shared/protocol').AudioDiagnosticsInfo
 }
 
+/**
+ * Events go to the main window and are mirrored to the private overlay, so
+ * the overlay can show captions/answers without its own provider access.
+ */
+let mirrorHook: ((channel: string, payload: unknown) => void) | null = null
+
 function send(window: BrowserWindow | null, channel: string, payload: unknown): void {
   if (window && !window.isDestroyed()) window.webContents.send(channel, payload)
+  mirrorHook?.(channel, payload)
 }
 
 export function registerIpcHandlers(deps: IpcDeps): void {
   const { settings, creds, registry, sttRegistry, chat, transcript, screen, context, modes, practice, permissionGate, getWindow } = deps
 
+  mirrorHook = (channel, payload) => deps.overlay.mirror(channel, payload)
+
   ipcMain.handle(IPC.settingsGet, () => settings.get())
 
   ipcMain.handle(IPC.settingsSet, (_e, raw: unknown) => {
     const parsed = AppSettingsSchema.parse(raw)
-    return settings.set(parsed)
+    const before = settings.get().overlay
+    const stored = settings.set(parsed)
+    // Overlay settings are applied live: enabling the toggle must actually
+    // create the window and apply capture exclusion immediately.
+    if (JSON.stringify(before) !== JSON.stringify(stored.overlay)) {
+      deps.overlay.set(stored.overlay)
+    }
+    return stored
+  })
+
+  /* ── Private desktop overlay (Phase 6) ─────────────────────────────── */
+
+  ipcMain.handle(IPC.overlayGetState, () => deps.overlay.getState())
+
+  ipcMain.handle(IPC.overlaySet, (_e, raw: unknown) => {
+    const parsed = OverlaySetRequestSchema.safeParse(raw)
+    if (!parsed.success) return deps.overlay.getState()
+    return deps.overlay.set(parsed.data)
+  })
+
+  ipcMain.on(IPC.overlayHide, () => deps.overlay.hide())
+
+  ipcMain.on(IPC.overlayPush, (_e, raw: unknown) => {
+    const parsed = OverlayContentSchema.safeParse(raw)
+    if (parsed.success) deps.overlay.push(parsed.data)
   })
 
   /* ── Personal profiles (transformation) ─────────────────────────────── */

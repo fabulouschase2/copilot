@@ -16,6 +16,7 @@ storage. Built with Electron 38 + TypeScript + React 19.
 | Personal profiles | Multiple named profiles, per-profile facts, active profile scoping for retrieval and practice | ✅ implemented |
 | Session isolation | Purpose-tagged transcription sessions (`interview` / `meeting` / `practice`) — transcripts never leak across workflows | ✅ implemented |
 | Packaging | NSIS installer built, installed and launch-verified (`dist/Copilot-Setup-0.2.1.exe`) | ✅ verified |
+| Private overlay | Frameless always-on-top captions/answer window; Windows `WDA_EXCLUDEFROMCAPTURE` with OS-confirmed status; `Ctrl+Alt+O`; measured 8.21% → 0% captured pixels | ✅ implemented, capture exclusion measured |
 | Audio pipeline | **Fixed & verified with real audio on Windows (dev + installed)**: renderer capture wiring + Electron getDisplayMedia permission flow; honest state reporting via the new Audio diagnostics view | ✅ real-audio verified |
 | Transcription E2E | Real STT requests reach the provider; results **BLOCKED on the user saving a Groq API key** (the provider returns 401, surfaced verbatim). Pipeline verified end-to-end up to the credential boundary; once a key is saved, transcription works. | BLOCKED (one-time user action) |
 | Speaker diarization | Not implemented — segments are labeled by capture source (Mic vs System) only, never presented as speaker identities | — honest exclusion |
@@ -25,8 +26,10 @@ Full detail: `docs/full-functionality-audit.md` (v0.2.1 audit: every feature, re
 blockers) · `docs/transformation-report.md` (what changed and why) · `docs/feature-parity.md` ·
 stage reports in `docs/stage-reports/`.
 
-**Design exclusions** (deliberate, per spec): no capture-invisible overlay, no answer autotyping, no
-stealth recording. This is a visible-window, consent-based assistant.
+**Design exclusions** (deliberate): no answer autotyping, no stealth recording, no proctoring
+evasion. The private overlay (Phase 6) is a *visible* window that Windows excludes from capture
+where supported — the app always reports the OS-confirmed affinity, never the request. See
+`docs/overlay-capture-exclusion.md`.
 
 ## Setup
 

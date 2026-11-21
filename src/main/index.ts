@@ -19,6 +19,7 @@ import { SQLiteStore } from './services/context/sqlite-store'
 import { migrateLegacyJson } from './services/context/migration'
 import { MeetingSaveRequestSchema } from '../shared/protocol'
 import { ModesService } from './services/modes/modes-service'
+import { OverlayController } from './overlay-window'
 import { PracticeService } from './services/practice/practice-service'
 import { createMainWindow, getMainWindow, toggleWindowVisible } from './window'
 import { electronAccelerators } from '../shared/shortcuts'
@@ -53,6 +54,20 @@ if (!SINGLE_INSTANCE_LOCK) {
     if (process.env['COPILOT_SELFTEST'] === 'screen') {
       void import('./selftest').then(async ({ runScreenSelfTest }) => {
         await runScreenSelfTest()
+        app.exit(0)
+      })
+      return
+    }
+    if (process.env['COPILOT_SELFTEST'] === 'overlay') {
+      void import('./selftest').then(async ({ runOverlaySelfTest }) => {
+        await runOverlaySelfTest()
+        app.exit(0)
+      })
+      return
+    }
+    if (process.env['COPILOT_SELFTEST'] === 'overlay-window') {
+      void import('./selftest').then(async ({ runOverlayWindowSelfTest }) => {
+        await runOverlayWindowSelfTest()
         app.exit(0)
       })
       return
@@ -107,6 +122,25 @@ if (!SINGLE_INSTANCE_LOCK) {
       activeProfileId: () => settings.get().activeProfileId,
       getWindow: getMainWindow
     })
+    // Phase 6: private overlay. Capture exclusion is applied to this window
+    // only, and its state is always read back from the OS.
+    const overlay = new OverlayController({
+      userDataDir: userData,
+      preloadPath: path.join(__dirname, '../preload/index.js'),
+      devUrl: process.env['ELECTRON_RENDERER_URL'] ?? null,
+      overlayHtml: path.join(__dirname, '../renderer/overlay.html'),
+      getSettings: () => settings.get().overlay,
+      persist: (patch) => {
+        const current = settings.get()
+        const next = settings.set({ ...current, overlay: { ...current.overlay, ...patch } })
+        return next.overlay
+      },
+      onStateChange: (state) => {
+        const win = getMainWindow()
+        if (win && !win.isDestroyed()) win.webContents.send('overlay:state', state)
+      }
+    })
+
     const responseLanguage = (): string => settings.get().responseLanguage
     const chat = new ChatController(registry, (question) =>
       contextService.retrieve(question, {
@@ -346,6 +380,7 @@ if (!SINGLE_INSTANCE_LOCK) {
       modes,
       practice,
       permissionGate,
+      overlay,
       getWindow: getMainWindow,
       listMeetings,
       saveMeeting,
@@ -432,6 +467,9 @@ if (!SINGLE_INSTANCE_LOCK) {
 
     createMainWindow()
 
+    // Restore a remembered overlay (and its capture exclusion) at startup.
+    overlay.restore()
+
     // Registry-driven global shortcuts (single source: shared/shortcuts.ts).
     for (const { id, accelerator } of electronAccelerators()) {
       globalShortcut.register(accelerator, () => {
@@ -446,6 +484,9 @@ if (!SINGLE_INSTANCE_LOCK) {
             break
           case 'end-session':
             win?.webContents.send('app:trigger', { action: 'end-session' })
+            break
+          case 'toggle-overlay':
+            overlay.set({ enabled: !overlay.getState().enabled })
             break
         }
       })

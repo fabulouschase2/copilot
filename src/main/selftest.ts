@@ -445,3 +445,172 @@ export async function runEmptyProbe(): Promise<void> {
   }
   process.exit(0)
 }
+
+/**
+ * Phase 6 verification: does Windows actually exclude the overlay from
+ * capture? Creates a solid-magenta probe window, captures the screen once
+ * with exclusion cleared and once applied, and reports the measured magenta
+ * share. Privacy is only claimed when the pixels really disappear AND the OS
+ * echoes WDA_EXCLUDEFROMCAPTURE.
+ */
+export async function runOverlaySelfTest(): Promise<void> {
+  const electron = (await import('electron')) as typeof import('electron')
+  const { WindowsCaptureExclusion } = await import('./services/overlay/display-affinity')
+  const exclusion = new WindowsCaptureExclusion()
+  const backend = new ElectronScreenBackend()
+
+  const probe = new electron.BrowserWindow({
+    width: 320,
+    height: 240,
+    x: 80,
+    y: 80,
+    frame: false,
+    show: true,
+    backgroundColor: '#FF00FF',
+    webPreferences: { sandbox: true, contextIsolation: true }
+  })
+  await probe.loadURL('data:text/html,<body style="margin:0;background:%23FF00FF"></body>')
+  await new Promise((r) => setTimeout(r, 500))
+
+  const magentaShare = (img: { rgba: Uint8Array; width: number; height: number }): number => {
+    let hits = 0
+    const total = img.width * img.height
+    for (let i = 0; i < img.rgba.length; i += 4) {
+      const r = img.rgba[i]
+      const g = img.rgba[i + 1]
+      const b = img.rgba[i + 2]
+      if (r > 190 && g < 90 && b > 190) hits += 1
+    }
+    return total > 0 ? hits / total : 0
+  }
+
+  const capture = async (): Promise<{ share: number; width: number; height: number }> => {
+    const c = await backend.capture('screen', undefined)
+    return { share: magentaShare(c.image), width: c.image.width, height: c.image.height }
+  }
+
+  const round = (n: number): number => Math.round(n * 100000) / 100000
+  const handle = (): Buffer => probe.getNativeWindowHandle()
+
+  const cleared = exclusion.apply(handle(), false)
+  await new Promise((r) => setTimeout(r, 400))
+  const capturable = await capture()
+
+  const applied = exclusion.apply(handle(), true)
+  await new Promise((r) => setTimeout(r, 400))
+  const excluded = await capture()
+
+  const report = {
+    support: exclusion.support,
+    supportMessage: exclusion.supportMessage,
+    clearOk: cleared.ok,
+    affinityCapturable: cleared.affinity,
+    applyOk: applied.ok,
+    affinityExcluded: applied.affinity,
+    osConfirmsExclusion: applied.affinity === 0x11,
+    magentaShareCapturable: round(capturable.share),
+    magentaShareExcluded: round(excluded.share),
+    captureSize: `${capturable.width}x${capturable.height}`,
+    // The probe must be clearly visible when capturable and must largely
+    // vanish when excluded. Thresholds are deliberately conservative.
+    probeVisibleWhenCapturable: capturable.share > 0.004,
+    probeHiddenWhenExcluded: excluded.share < capturable.share / 4
+  }
+  // eslint-disable-next-line no-console
+  console.log('[selftest]', JSON.stringify(report))
+
+  probe.destroy()
+}
+
+/**
+ * Phase 6 integration check: does the real overlay window load its production
+ * document, mount the React view through the sandboxed preload, and receive
+ * the OS-confirmed capture exclusion? Uses the same OverlayController the app
+ * uses; no mocks of the window lifecycle.
+ */
+export async function runOverlayWindowSelfTest(): Promise<void> {
+  const electron = (await import('electron')) as typeof import('electron')
+  const path = await import('node:path')
+  const { OverlayController } = await import('./overlay-window')
+
+  const tmp = nodeFs.mkdtempSync(path.join(electron.app.getPath('temp'), 'copilot-ovl-'))
+  let settings: import('../shared/protocol').OverlaySettings = {
+    enabled: false,
+    captureExcluded: true,
+    opacity: 0.9,
+    fontSize: 15,
+    showCaptions: true
+  }
+  const states: unknown[] = []
+  const controller = new OverlayController({
+    userDataDir: tmp,
+    preloadPath: path.join(__dirname, '../preload/index.js'),
+    devUrl: null,
+    overlayHtml: path.join(__dirname, '../renderer/overlay.html'),
+    getSettings: () => settings,
+    persist: (patch) => {
+      settings = { ...settings, ...patch }
+      return settings
+    },
+    onStateChange: (s) => states.push(s)
+  })
+
+  const state = controller.set({ enabled: true })
+  // The isolated harness registers the one channel the overlay renderer asks
+  // for on mount; the real app registers it in registerIpcHandlers.
+  electron.ipcMain.handle('overlay:get-state', () => controller.getState())
+  const win = electron.BrowserWindow.getAllWindows().find((w) => w.getTitle() === 'Copilot Overlay')
+
+  // Poll briefly for the renderer to mount.
+  let mounted = 0
+  let barText = ''
+  for (let i = 0; i < 40; i += 1) {
+    if (win && !win.isDestroyed() && !win.webContents.isLoading()) {
+      try {
+        mounted = await win.webContents.executeJavaScript(
+          'document.querySelectorAll(".ov-bar").length'
+        )
+        if (mounted > 0) {
+          barText = await win.webContents.executeJavaScript(
+            'document.querySelector(".ov-state")?.textContent ?? ""'
+          )
+          break
+        }
+      } catch {
+        /* keep polling */
+      }
+    }
+    await new Promise((r) => setTimeout(r, 250))
+  }
+
+  controller.push({ kind: 'answer', text: 'Overlay content pipeline check', question: 'Self-test' })
+  await new Promise((r) => setTimeout(r, 600))
+  let answerText = ''
+  if (win && !win.isDestroyed()) {
+    answerText = await win.webContents.executeJavaScript(
+      'document.querySelector(".ov-text")?.textContent ?? ""'
+    )
+  }
+
+  const report = {
+    windowCreated: Boolean(win),
+    windowVisible: win ? win.isVisible() : false,
+    alwaysOnTop: win ? win.isAlwaysOnTop() : false,
+    reactMounted: mounted > 0,
+    statusText: barText,
+    statusShowsExclusion: barText.includes('excluded from capture'),
+    contentRendered: answerText.includes('Overlay content pipeline check'),
+    affinity: state.affinity,
+    exclusionActive: state.exclusionActive,
+    stateEvents: states.length
+  }
+  // eslint-disable-next-line no-console
+  console.log('[selftest]', JSON.stringify(report))
+
+  controller.dispose()
+  try {
+    nodeFs.rmSync(tmp, { recursive: true, force: true })
+  } catch {
+    /* best-effort */
+  }
+}

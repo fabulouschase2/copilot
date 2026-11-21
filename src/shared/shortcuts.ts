@@ -20,6 +20,7 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
   { id: 'toggle-window', chord: 'ctrl+alt+c', scope: 'global', label: 'Show/hide the copilot window' },
   { id: 'read-screen', chord: 'ctrl+alt+r', scope: 'global', label: 'Read the current screen' },
   { id: 'end-session', chord: 'ctrl+alt+e', scope: 'global', label: 'End the active session' },
+  { id: 'toggle-overlay', chord: 'ctrl+alt+o', scope: 'global', label: 'Show/hide the private overlay' },
   { id: 'answer', chord: 'ctrl+enter', scope: 'in-app', label: 'Generate the answer' },
   { id: 'shorter', chord: 'ctrl+shift+arrowdown', scope: 'in-app', label: 'Make the answer shorter' },
   { id: 'rephrase', chord: 'ctrl+shift+arrowup', scope: 'in-app', label: 'Rephrase the answer' },

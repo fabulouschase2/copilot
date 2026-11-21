@@ -20,6 +20,8 @@ import {
   MeetingGenerateRequestSchema,
   ModeQuestion,
   NotesExportRequestSchema,
+  OverlayContentSchema,
+  OverlaySetRequestSchema,
   PracticeIdRequestSchema,
   PracticeStartRequestSchema,
   PracticeSubmitRequestSchema,
@@ -173,6 +175,18 @@ const api: CopilotApi = {
   onPracticeDelta: (cb: (e: { practiceId: string; requestId: string; kind: 'question' | 'eval' | 'scorecard'; delta: string }) => void) =>
     on(IPC.practiceDelta, cb),
   onPracticeError: (cb: (e: { practiceId: string; requestId: string; message: string }) => void) => on(IPC.practiceError, cb),
+
+  /* private desktop overlay (Phase 6) */
+  getOverlayState: () => ipcRenderer.invoke(IPC.overlayGetState),
+  setOverlay: (req: z.infer<typeof OverlaySetRequestSchema>) =>
+    ipcRenderer.invoke(IPC.overlaySet, OverlaySetRequestSchema.parse(req)),
+  hideOverlay: () => ipcRenderer.send(IPC.overlayHide, {}),
+  pushOverlayContent: (content: z.infer<typeof OverlayContentSchema>) =>
+    ipcRenderer.send(IPC.overlayPush, OverlayContentSchema.parse(content)),
+  onOverlayState: (cb: (e: import('../shared/protocol').OverlayStateInfo) => void) =>
+    on(IPC.overlayState, cb),
+  onOverlayContent: (cb: (e: z.infer<typeof OverlayContentSchema>) => void) =>
+    on(IPC.overlayContent, cb),
 
   onChatChunk: (cb: (e: ChatChunkEvent) => void) => {
     const listener = (_e: unknown, payload: ChatChunkEvent): void => cb(payload)

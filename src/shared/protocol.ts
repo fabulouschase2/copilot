@@ -93,7 +93,14 @@ export const IPC = {
   practiceQuestion: 'practice:question',
   practiceEvaluated: 'practice:evaluated',
   practiceFinished: 'practice:finished',
-  practiceError: 'practice:error'
+  practiceError: 'practice:error',
+  /* Private desktop overlay (Phase 6) */
+  overlayGetState: 'overlay:get-state',
+  overlaySet: 'overlay:set',
+  overlayHide: 'overlay:hide',
+  overlayPush: 'overlay:push',
+  overlayState: 'overlay:state',
+  overlayContent: 'overlay:content'
 } as const
 
 export const ChatRoleSchema = z.enum(['system', 'user', 'assistant'])
@@ -733,6 +740,81 @@ export const STTTestRequestSchema = z.object({
   providerId: z.string().min(1).max(64)
 })
 
+/* ─── Private desktop overlay (Phase 6) ──────────────────────────────── */
+
+/**
+ * Windows display affinity values. `WDA_EXCLUDEFROMCAPTURE` is the only
+ * value that means "visible to the user, absent from captures".
+ */
+export const WDA_NONE = 0x00000000
+export const WDA_MONITOR = 0x00000001
+export const WDA_EXCLUDEFROMCAPTURE = 0x00000011
+
+/** First Windows build supporting WDA_EXCLUDEFROMCAPTURE (10, 2004). */
+export const MIN_BUILD_EXCLUDEFROMCAPTURE = 19_041
+
+export const AffinitySupportSchema = z.enum([
+  'supported',
+  'unsupported-platform',
+  'unsupported-os',
+  'binding-unavailable'
+])
+export type AffinitySupport = z.infer<typeof AffinitySupportSchema>
+
+export const OverlaySettingsSchema = z.object({
+  /** User intent: show the floating overlay window. */
+  enabled: z.boolean().default(false),
+  /**
+   * User intent: ask Windows to exclude the overlay from capture. Whether it
+   * actually took effect is never inferred from this flag — see
+   * `OverlayStateInfo.exclusionActive`.
+   */
+  captureExcluded: z.boolean().default(true),
+  opacity: z.number().min(0.25).max(1).default(0.94),
+  fontSize: z.number().int().min(11).max(28).default(15),
+  /** Show live interviewer captions above the answer. */
+  showCaptions: z.boolean().default(true)
+})
+export type OverlaySettings = z.infer<typeof OverlaySettingsSchema>
+
+export const OverlaySetRequestSchema = z.object({
+  enabled: z.boolean().optional(),
+  captureExcluded: z.boolean().optional(),
+  opacity: z.number().min(0.25).max(1).optional(),
+  fontSize: z.number().int().min(11).max(28).optional(),
+  showCaptions: z.boolean().optional()
+})
+export type OverlaySetRequest = z.infer<typeof OverlaySetRequestSchema>
+
+/** One thing the overlay should display (pushed by the main window). */
+export const OverlayContentSchema = z.object({
+  kind: z.enum(['caption', 'answer', 'idle']),
+  text: z.string().max(20_000),
+  question: z.string().max(2_000).optional(),
+  source: z.enum(['mic', 'system']).optional()
+})
+export type OverlayContent = z.infer<typeof OverlayContentSchema>
+
+/**
+ * What the UI is allowed to claim about the overlay. `exclusionActive` is
+ * derived from the OS-reported display affinity, never from the request.
+ */
+export interface OverlayStateInfo {
+  enabled: boolean
+  visible: boolean
+  captureExcluded: boolean
+  affinity: number | null
+  exclusionActive: boolean
+  exclusionUnverified: boolean
+  support: AffinitySupport
+  supportMessage: string
+  opacity: number
+  fontSize: number
+  showCaptions: boolean
+  error: string | null
+  lastErrorCode: number | null
+}
+
 export const AppSettingsSchema = z.object({
   providers: z.array(ProviderConfigSchema).max(20).default([]),
   activeProviderId: z.string().min(1).max(64).nullable().default(null),
@@ -763,6 +845,13 @@ export const AppSettingsSchema = z.object({
     activeSttProviderId: null,
     vadThresholdDb: -45,
     maxSegmentMs: 20_000
+  }),
+  overlay: OverlaySettingsSchema.default({
+    enabled: false,
+    captureExcluded: true,
+    opacity: 0.94,
+    fontSize: 15,
+    showCaptions: true
   })
 })
 export type AppSettings = z.infer<typeof AppSettingsSchema>
@@ -1057,4 +1146,11 @@ export interface CopilotApi {
   onPracticeFinished(cb: (e: PracticeFinishedEvent) => void): () => void
   onPracticeDelta(cb: (e: { practiceId: string; requestId: string; kind: 'question' | 'eval' | 'scorecard'; delta: string }) => void): () => void
   onPracticeError(cb: (e: { practiceId: string; requestId: string; message: string }) => void): () => void
+  /* private desktop overlay (Phase 6) */
+  getOverlayState(): Promise<OverlayStateInfo>
+  setOverlay(req: OverlaySetRequest): Promise<OverlayStateInfo>
+  hideOverlay(): void
+  pushOverlayContent(content: OverlayContent): void
+  onOverlayState(cb: (e: OverlayStateInfo) => void): () => void
+  onOverlayContent(cb: (e: OverlayContent) => void): () => void
 }

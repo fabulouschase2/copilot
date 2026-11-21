@@ -1,0 +1,191 @@
+/* Private overlay surface (Phase 6).
+   The window is transparent; this card is the only painted area so rounded
+   corners stay clean and the desktop shows through around it. */
+
+html,
+body.overlay-body {
+  margin: 0;
+  padding: 0;
+  background: transparent !important;
+  overflow: hidden;
+  height: 100%;
+  font-family: var(--font);
+  color: var(--text);
+  user-select: none;
+}
+
+#root {
+  height: 100%;
+}
+
+.overlay {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  box-sizing: border-box;
+  border: 1px solid rgba(108, 140, 255, 0.28);
+  border-radius: 12px;
+  background: rgba(15, 17, 21, 0.93);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(0, 0, 0, 0.35) inset;
+  backdrop-filter: blur(10px);
+  overflow: hidden;
+}
+
+.ov-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 10px;
+  background: linear-gradient(180deg, rgba(108, 140, 255, 0.16), rgba(108, 140, 255, 0.04));
+  border-bottom: 1px solid rgba(108, 140, 255, 0.18);
+  -webkit-app-region: drag;
+  flex: 0 0 auto;
+}
+
+.ov-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.ov-logo {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  background: linear-gradient(140deg, var(--accent-strong), var(--accent));
+  box-shadow: 0 0 8px rgba(108, 140, 255, 0.7);
+}
+
+.ov-state {
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.ov-state.ok {
+  color: var(--ok);
+  background: var(--ok-soft);
+  border-color: rgba(76, 212, 139, 0.3);
+}
+.ov-state.warn {
+  color: var(--warn);
+  background: var(--warn-soft);
+  border-color: rgba(255, 196, 107, 0.3);
+}
+.ov-state.err {
+  color: var(--error);
+  background: var(--error-soft);
+  border-color: rgba(255, 112, 112, 0.35);
+}
+.ov-state.dim {
+  color: var(--text-faint);
+}
+
+.ov-grow {
+  flex: 1 1 auto;
+}
+
+.ov-btn {
+  -webkit-app-region: no-drag;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11px;
+  cursor: pointer;
+}
+.ov-btn:hover {
+  background: rgba(255, 112, 112, 0.14);
+  border-color: rgba(255, 112, 112, 0.35);
+  color: var(--error);
+}
+
+.ov-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  line-height: 1.45;
+}
+
+.ov-captions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed var(--border);
+}
+
+.ov-caption {
+  font-size: 0.86em;
+  color: var(--text-dim);
+}
+.ov-caption.mic {
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+.ov-src {
+  display: inline-block;
+  margin-right: 6px;
+  font-size: 0.72em;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent-strong);
+  opacity: 0.85;
+}
+
+.ov-answer {
+  overflow-y: auto;
+}
+
+.ov-question {
+  font-size: 0.86em;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+  padding-left: 8px;
+  border-left: 2px solid var(--accent);
+}
+
+.ov-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+  user-select: text;
+}
+
+.ov-placeholder {
+  color: var(--text-faint);
+  font-size: 0.9em;
+  padding: 4px 0;
+}
+
+.ov-foot {
+  flex: 0 0 auto;
+  padding: 4px 12px 7px;
+  border-top: 1px solid rgba(38, 44, 56, 0.7);
+}
+
+.ov-hint {
+  font-size: 10px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}

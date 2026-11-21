@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { AppSettings, DEFAULT_SETTINGS, TranscriptStatusEvent } from '../../shared/protocol'
+import { AppSettings, DEFAULT_SETTINGS, OverlayStateInfo, TranscriptStatusEvent } from '../../shared/protocol'
 import { InterviewPanel } from './InterviewPanel'
 import { MeetingPanel } from './MeetingPanel'
 import { PracticePanel } from './PracticePanel'
@@ -7,13 +7,15 @@ import { SetupPanel } from './SetupPanel'
 import { ChatPanel } from './ChatPanel'
 import { ReadScreenModal } from './ReadScreenModal'
 import { AudioDiagnosticsModal } from './AudioDiagnosticsModal'
+import { OverlayPanel } from './OverlayPanel'
 
-type View = 'interview' | 'practice' | 'meetings' | 'chat' | 'setup'
+type View = 'interview' | 'practice' | 'meetings' | 'overlay' | 'chat' | 'setup'
 
 const NAV: Array<{ id: View; label: string }> = [
   { id: 'interview', label: 'Interview' },
   { id: 'practice', label: 'Practice' },
   { id: 'meetings', label: 'Meetings' },
+  { id: 'overlay', label: 'Overlay' },
   { id: 'chat', label: 'Chat' }
 ]
 
@@ -30,11 +32,31 @@ export function App(): React.JSX.Element {
   const [session, setSession] = useState<TranscriptStatusEvent | null>(null)
   const [screenOpen, setScreenOpen] = useState(false)
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
+  const [overlayState, setOverlayState] = useState<OverlayStateInfo | null>(null)
 
   useEffect(() => {
     void window.copilot.getSettings().then(setSettings)
     return window.copilot.onTranscriptStatus((e) => {
       setSession((cur) => (cur === null || cur.sessionId === e.sessionId || e.state === 'stopped' ? e : cur))
+    })
+  }, [])
+
+  useEffect(() => {
+    void window.copilot.getOverlayState().then(setOverlayState)
+    return window.copilot.onOverlayState((e) => {
+      setOverlayState(e)
+      // The overlay owns its settings; keep local settings in sync without
+      // writing them back (the main process already persisted the change).
+      setSettings((s) => ({
+        ...s,
+        overlay: {
+          enabled: e.enabled,
+          captureExcluded: e.captureExcluded,
+          opacity: e.opacity,
+          fontSize: e.fontSize,
+          showCaptions: e.showCaptions
+        }
+      }))
     })
   }, [])
 
@@ -82,6 +104,17 @@ export function App(): React.JSX.Element {
         <button className="chip" title="Read the current screen (Ctrl+Alt+R)" onClick={() => setScreenOpen(true)}>
           Read screen
         </button>
+        <button
+          className={`chip ${overlayState?.enabled ? 'chip-active' : ''}`}
+          title="Private overlay (Ctrl+Alt+O)"
+          onClick={() => {
+            void window.copilot
+              .setOverlay({ enabled: !(overlayState?.enabled ?? false) })
+              .then(setOverlayState)
+          }}
+        >
+          {overlayState?.exclusionActive ? '🛡 Overlay' : '🪟 Overlay'}
+        </button>
         <button className={`chip ${view === 'setup' ? 'chip-active' : ''}`} title="Settings" onClick={openSettings}>
           ⚙ Settings
         </button>
@@ -127,6 +160,12 @@ export function App(): React.JSX.Element {
         )}
         {view === 'practice' && <PracticePanel settings={settings} />}
         {view === 'meetings' && <MeetingPanel settings={settings} />}
+        {view === 'overlay' && (
+          <OverlayPanel
+            settings={settings}
+            onOverlayChange={(overlay) => setSettings((s) => ({ ...s, overlay }))}
+          />
+        )}
         {view === 'chat' && <ChatPanel settings={settings} onOpenSettings={() => setView('setup')} />}
         {view === 'setup' && (
           <SetupPanel settings={settings} onChange={persistSettings} onOpenInterview={() => setView('interview')} />

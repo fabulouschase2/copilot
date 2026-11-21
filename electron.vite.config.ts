@@ -1,3 +1,4 @@
+import path from 'node:path'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 
@@ -12,6 +13,16 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin({ exclude: ['zod'] })]
   },
   renderer: {
-    plugins: [react()]
+    plugins: [react()],
+    build: {
+      rollupOptions: {
+        // Two documents: the main workspace and the frameless private overlay
+        // (Phase 6). Both share the same preload bridge.
+        input: {
+          index: path.join(__dirname, 'src/renderer/index.html'),
+          overlay: path.join(__dirname, 'src/renderer/overlay.html')
+        }
+      }
+    }
   }
 })
