@@ -24,6 +24,7 @@ import {
   OverlayContentSchema,
   OverlaySetRequestSchema,
   ProviderRoutesRequestSchema,
+  ScreenTranslateRequestSchema,
   StoryDraftRequestSchema,
   StoryIdRequestSchema,
   StoryUpsertRequestSchema,
@@ -108,6 +109,12 @@ const api: CopilotApi = {
   onScreenError: (cb: (e: ScreenErrorEvent) => void) => on(IPC.screenError, cb),
   onScreenStatus: (cb: (e: ScreenStatusEvent) => void) => on(IPC.screenStatus, cb),
   onScreenMetrics: (cb: (e: ScreenMetricsEvent) => void) => on(IPC.screenMetrics, cb),
+
+  /* screen region translation (0.4.0) */
+  translateScreen: (req: z.infer<typeof ScreenTranslateRequestSchema>) =>
+    ipcRenderer.invoke(IPC.screenTranslate, ScreenTranslateRequestSchema.parse(req)),
+  screenTranslationHistory: () => ipcRenderer.invoke(IPC.screenTranslateHistory),
+  clearScreenTranslations: () => ipcRenderer.send(IPC.screenTranslateClear, {}),
   listContextSources: () => ipcRenderer.invoke(IPC.contextList),
   importDocuments: () => ipcRenderer.invoke(IPC.contextImport),
   applyProfileOp: (op: ProfileFactOp) =>

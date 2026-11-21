@@ -1492,3 +1492,109 @@ export async function runProviderSelfTest(): Promise<void> {
     /* best-effort */
   }
 }
+
+/**
+ * 0.4.0 verification: screen translation end to end, with no cloud key.
+ * Renders English text in a window, captures it, runs LOCAL Windows OCR, then
+ * translates with the configured provider (Ollama here). Also checks that a
+ * blank region is reported as "no readable text" rather than a blank success.
+ */
+export async function runScreenTranslationSelfTest(): Promise<void> {
+  const electron = (await import('electron')) as typeof import('electron')
+  const { ElectronScreenBackend, cropImage, cropRect } = await import('./services/screen/screen-backend')
+  const { ScreenTranslationService } = await import('./services/screen/screen-translation')
+  const { ocrImageFile } = await import('./services/screen/local-ocr')
+  const { TranslationService } = await import('./services/translation/translation-service')
+  const { OpenAICompatibleProvider } = await import('./services/providers/openai-compatible')
+
+  const baseUrl = process.env['COPILOT_TRANSLATE_BASEURL'] ?? 'http://127.0.0.1:11434/v1'
+  const model = process.env['COPILOT_TRANSLATE_MODEL'] ?? 'qwen2.5:1.5b'
+  const provider = new OpenAICompatibleProvider({
+    id: 'selftest-ollama',
+    label: 'Ollama (self-test)',
+    baseUrl,
+    apiKey: '',
+    model,
+    vision: false
+  })
+  const translation = new TranslationService({
+    resolveProvider: () => ({ provider, model }),
+    getSettings: () => ({ enabled: true, targetLanguage: 'es', showOriginal: true, fontSize: 15 })
+  })
+
+  const win = new electron.BrowserWindow({
+    width: 900,
+    height: 260,
+    x: 100,
+    y: 80,
+    frame: false,
+    show: true,
+    backgroundColor: '#ffffff',
+    title: 'OCR SELFTEST',
+    webPreferences: { sandbox: true, contextIsolation: true }
+  })
+  const html = encodeURIComponent(
+    '<body style="margin:0;background:#ffffff;color:#111;font:28px Segoe UI;padding:26px">' +
+      '<div>Good morning. The meeting starts at nine.</div>' +
+      '<div>Please review the quarterly numbers.</div></body>'
+  )
+  await win.loadURL(`data:text/html;charset=utf-8,${html}`)
+  await new Promise((r) => setTimeout(r, 900))
+
+  const sources = await electron.desktopCapturer.getSources({
+    types: ['window'],
+    thumbnailSize: { width: 32, height: 32 }
+  })
+  const source = sources.find((s) => s.name.includes('OCR SELFTEST'))
+
+  const backend = new ElectronScreenBackend()
+  const service = new ScreenTranslationService({
+    capture: async (sourceId, region) => {
+      const kind = sourceId && sourceId.startsWith('window:') ? 'window' : 'screen'
+      const cap = await backend.capture(kind, sourceId)
+      let image = cap.image
+      if (region) {
+        const rect = cropRect(image.width, image.height, region)
+        if (rect) image = cropImage(image, rect)
+      }
+      return { jpegBase64: backend.encode(image), width: image.width, height: image.height }
+    },
+    ocr: (file) => ocrImageFile(file),
+    translate: (text, target) => translation.translateDetached(text, undefined, target)
+  })
+
+  const report: Record<string, unknown> = {
+    windowCaptureAvailable: Boolean(source),
+    sourceId: source?.id ?? null
+  }
+
+  if (source) {
+    const t0 = Date.now()
+    const res = await service.translateRegion({ sourceId: source.id, targetLanguage: 'es' })
+    report.elapsedMs = Date.now() - t0
+    report.ok = res.ok
+    report.original = res.original.slice(0, 300)
+    report.translated = res.translated.slice(0, 300)
+    report.ocrProvider = res.ocrProvider
+    report.translateProvider = res.translateProvider
+    report.ocrLanguage = res.ocrLanguage
+    report.detectedLanguage = res.detectedLanguage
+    report.recognisedEnglish = /meeting starts at nine/i.test(res.original)
+    report.translatedNonEmpty = res.translated.trim().length > 0
+    report.historyCount = service.list().length
+    report.message = res.message
+  }
+
+  // Blank area must not be reported as a successful translation.
+  const blank = await service.translateRegion({
+    sourceId: source?.id,
+    region: { x: 0, y: 0, w: 0.02, h: 0.02 },
+    targetLanguage: 'es'
+  })
+  report.blankOk = blank.ok
+  report.blankMessage = blank.message ?? null
+
+  // eslint-disable-next-line no-console
+  console.log('[selftest]', JSON.stringify(report))
+  if (!win.isDestroyed()) win.destroy()
+}

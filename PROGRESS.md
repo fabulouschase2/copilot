@@ -244,6 +244,34 @@ Interview answers already receive the top-ranked stories; meetings are deliberat
 Audit note: translation, stories and practice each perform exactly one provider call per unit of
 work — no engine re-runs another engine's inference.
 
+## 0.4.0 phase 1/2 — routing and screen translation (delivered)
+
+**AI modes and routing.** `aiMode` (local / cloud / hybrid, default hybrid) plus
+`allowCloudPrivate`. `ProviderRegistry.plan()` returns the ordered routes for a task: local first,
+cloud only when the mode and the privacy rule allow it; private tasks (screen, meetings, career)
+never reach cloud unless the user opts in. `resolveActive`/`resolveVision` now use the same rules,
+so every existing feature inherits them. Settings shows the live routing order for chat and for
+screen analysis, including why cloud was excluded. 14 tests.
+
+**Screen translation (OCR + language engine).** Region capture → **local Windows OCR** (no key, no
+download) → translation on the active provider. OCR and translation are separate services: an OCR
+failure says “no readable text”, a translation failure keeps the recognised text and marks the
+result partial. Measured end to end with no cloud key:
+
+```json
+{"ok":true,"elapsedMs":6268,
+ "original":"Good morning. The meeting starts at nine. Please review the quarterly numbers.",
+ "translated":"Buenos días. La reunión comienza a las nueve. Por favor, revise los números cuatrimestrales.",
+ "ocrProvider":"Windows OCR","translateProvider":"Ollama (self-test)","ocrLanguage":"en-US",
+ "blankOk":false,"blankMessage":"No readable text was found in that region. Try a larger area."}
+```
+
+UI: Read screen → select region → target language → Translate; original + translation with both
+providers named, copy, and send-to-overlay. History: last 20 in memory. 14 tests. Evidence:
+`docs/screen-translation.md`.
+
+Full suite after these phases: **402 / 402 passed** (47 files); typecheck and build clean.
+
 ## Remaining phases
 
 Tracked in `FEATURE_STATUS.md`. Cloud sync, billing and the phone companion require

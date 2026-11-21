@@ -46,6 +46,9 @@ export const IPC = {
   screenError: 'screen:error',
   screenStatus: 'screen:status',
   screenMetrics: 'screen:metrics',
+  screenTranslate: 'screen:translate',
+  screenTranslateHistory: 'screen:translation-history',
+  screenTranslateClear: 'screen:translation-clear',
   contextList: 'context:list',
   contextImport: 'context:import',
   contextProfileOp: 'context:profile-op',
@@ -1080,6 +1083,32 @@ export interface ProviderRoute {
   kind: ProviderKind
 }
 
+/** Screen-region translation (0.4.0): local OCR + the language engine. */
+export const ScreenTranslateRequestSchema = z.object({
+  sourceId: z.string().min(1).max(128).optional(),
+  region: ScreenRegionSchema.optional(),
+  targetLanguage: z.string().min(2).max(8).optional()
+})
+export type ScreenTranslateRequest = z.infer<typeof ScreenTranslateRequestSchema>
+
+export interface ScreenTranslationInfo {
+  ok: boolean
+  id: string
+  original: string
+  translated: string
+  targetLanguage: string
+  detectedLanguage: string | null
+  ocrLanguage: string | null
+  ocrProvider: string
+  translateProvider: string
+  at: string
+  region: ScreenRegion | null
+  width: number
+  height: number
+  message?: string
+  partial?: boolean
+}
+
 export const AppSettingsSchema = z.object({
   providers: z.array(ProviderConfigSchema).max(20).default([]),
   activeProviderId: z.string().min(1).max(64).nullable().default(null),
@@ -1372,6 +1401,10 @@ export interface CopilotApi {
   onScreenError(cb: (e: ScreenErrorEvent) => void): () => void
   onScreenStatus(cb: (e: ScreenStatusEvent) => void): () => void
   onScreenMetrics(cb: (e: ScreenMetricsEvent) => void): () => void
+  /* screen region translation */
+  translateScreen(req: ScreenTranslateRequest): Promise<ScreenTranslationInfo>
+  screenTranslationHistory(): Promise<{ entries: ScreenTranslationInfo[] }>
+  clearScreenTranslations(): void
   listContextSources(): Promise<{
     sources: ContextSourceInfo[]
     session: { id: string | null; transcriptItems: number; screenItems: number }

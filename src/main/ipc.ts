@@ -56,8 +56,9 @@ import type { PracticeService } from './services/practice/practice-service'
 import type { TranslationService } from './services/translation/translation-service'
 import type { StoryBankService } from './services/stories/story-service'
 import type { ResumeExtractionService } from './services/career/resume-facts'
+import type { ScreenTranslationService } from './services/screen/screen-translation'
 import type { OverlayController } from './overlay-window'
-import { OverlayContentSchema, OverlaySetRequestSchema, WhisperConfigureRequestSchema, StoryDraftRequestSchema, StoryIdRequestSchema, StoryUpsertRequestSchema, DocumentIdRequestSchema, ProviderRoutesRequestSchema } from '../shared/protocol'
+import { OverlayContentSchema, OverlaySetRequestSchema, WhisperConfigureRequestSchema, StoryDraftRequestSchema, StoryIdRequestSchema, StoryUpsertRequestSchema, DocumentIdRequestSchema, ProviderRoutesRequestSchema, ScreenTranslateRequestSchema } from '../shared/protocol'
 
 export interface IpcDeps {
   settings: SettingsStore
@@ -67,6 +68,7 @@ export interface IpcDeps {
   chat: ChatController
   transcript: TranscriptService
   screen: ScreenService
+  screenTranslation: ScreenTranslationService
   context: ContextService
   modes: ModesService
   practice: PracticeService
@@ -509,6 +511,39 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   })
 
   ipcMain.on(IPC.screenClear, () => screen.clear())
+
+  /* ── Screen-region translation (0.4.0) ──────────────────────────────── */
+
+  ipcMain.handle(IPC.screenTranslate, async (_e, raw: unknown) => {
+    const parsed = ScreenTranslateRequestSchema.safeParse(raw ?? {})
+    if (!parsed.success) {
+      return {
+        ok: false,
+        id: 'invalid',
+        original: '',
+        translated: '',
+        targetLanguage: '',
+        detectedLanguage: null,
+        ocrLanguage: null,
+        ocrProvider: 'none',
+        translateProvider: 'none',
+        at: new Date().toISOString(),
+        region: null,
+        width: 0,
+        height: 0,
+        message: 'Invalid translation request'
+      }
+    }
+    const target = parsed.data.targetLanguage ?? settings.get().translation.targetLanguage
+    return deps.screenTranslation.translateRegion({
+      sourceId: parsed.data.sourceId,
+      region: parsed.data.region,
+      targetLanguage: target
+    })
+  })
+
+  ipcMain.handle(IPC.screenTranslateHistory, () => ({ entries: deps.screenTranslation.list() }))
+  ipcMain.on(IPC.screenTranslateClear, () => deps.screenTranslation.clear())
 
   // Controller events are forwarded to whatever window is current at event
   // time; controller holds this object from construction.

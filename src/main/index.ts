@@ -12,8 +12,10 @@ import { ProviderRegistry } from './services/provider-registry'
 import { SettingsStore } from './services/settings-store'
 import { SttRegistry } from './services/stt/stt-registry'
 import { TranscriptService } from './services/transcription-service'
-import { ElectronScreenBackend } from './services/screen/screen-backend'
 import { ScreenService } from './services/screen/screen-service'
+import { ElectronScreenBackend, cropImage, cropRect } from './services/screen/screen-backend'
+import { ScreenTranslationService } from './services/screen/screen-translation'
+import { ocrImageFile } from './services/screen/local-ocr'
 import { ContextService } from './services/context/context-service'
 import { SQLiteStore } from './services/context/sqlite-store'
 import { migrateLegacyJson } from './services/context/migration'
@@ -124,6 +126,13 @@ if (!SINGLE_INSTANCE_LOCK) {
     if (process.env['COPILOT_SELFTEST'] === 'providers') {
       void import('./selftest').then(async ({ runProviderSelfTest }) => {
         await runProviderSelfTest()
+        app.exit(0)
+      })
+      return
+    }
+    if (process.env['COPILOT_SELFTEST'] === 'screentranslate') {
+      void import('./selftest').then(async ({ runScreenTranslationSelfTest }) => {
+        await runScreenTranslationSelfTest()
         app.exit(0)
       })
       return
@@ -335,6 +344,28 @@ if (!SINGLE_INSTANCE_LOCK) {
       armGate: screenGate
     })
 
+    // 0.4.0: screen-region translation — local OCR + the language engine.
+    const screenBackend = new ElectronScreenBackend()
+    const screenTranslation = new ScreenTranslationService({
+      capture: async (sourceId, region) => {
+        // Source ids are 'window:<hwnd>:<n>' or 'screen:<n>:<n>'.
+        const kind = sourceId && sourceId.startsWith('window:') ? 'window' : 'screen'
+        const cap = await screenBackend.capture(kind, sourceId)
+        let image = cap.image
+        if (region) {
+          const rect = cropRect(image.width, image.height, region)
+          if (rect) image = cropImage(image, rect)
+        }
+        return {
+          jpegBase64: screenBackend.encode(image),
+          width: image.width,
+          height: image.height
+        }
+      },
+      ocr: (file) => ocrImageFile(file),
+      translate: (text, target) => translation.translateDetached(text, undefined, target)
+    })
+
     // ── Stage 9: backup / restore / persistence status ──────────────────
     const backupDir = path.join(userData, 'backups')
     const listBackups = (): string[] => {
@@ -499,6 +530,7 @@ if (!SINGLE_INSTANCE_LOCK) {
       chat,
       transcript,
       screen,
+      screenTranslation,
       context: contextService,
       modes,
       practice,

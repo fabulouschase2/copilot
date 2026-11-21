@@ -188,15 +188,20 @@ export class TranslationService {
    * One-off translation for a manual check. Never aborts live captions, so the
    * "Test translation" button cannot disturb a running session.
    */
-  async translateDetached(text: string, sourceLanguage?: string): Promise<TranslateOutcome> {
+  async translateDetached(
+    text: string,
+    sourceLanguage?: string,
+    targetOverride?: string
+  ): Promise<TranslateOutcome> {
     const timeout = AbortSignal.timeout(TRANSLATE_TIMEOUT_MS)
-    return this.request(text, sourceLanguage, timeout)
+    return this.request(text, sourceLanguage, timeout, targetOverride)
   }
 
   private async request(
     text: string,
     sourceLanguage: string | undefined,
-    signal: AbortSignal
+    signal: AbortSignal,
+    targetOverride?: string
   ): Promise<TranslateOutcome> {
     const resolved = this.deps.resolveProvider()
     if (!resolved) {
@@ -207,7 +212,7 @@ export class TranslationService {
         message: 'No AI provider is configured. Add one in Settings → Providers.'
       }
     }
-    const target = this.deps.getSettings().targetLanguage
+    const target = targetOverride ?? this.deps.getSettings().targetLanguage
 
     let raw = ''
     try {

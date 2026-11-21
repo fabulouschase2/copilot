@@ -3,8 +3,10 @@ import {
   AppSettings,
   ScreenAnalysisResult,
   ScreenKind,
-  ScreenSourceInfo
+  ScreenSourceInfo,
+  ScreenTranslationInfo
 } from '../../shared/protocol'
+import { TRANSLATION_LANGUAGES } from '../../shared/languages'
 import { renderAnswer } from './answerRender'
 import { ErrorBox, NoticeBox, Spinner } from './ui'
 
@@ -37,6 +39,9 @@ export function ReadScreenModal(props: { settings: AppSettings; onClose: () => v
   const [streamText, setStreamText] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [translating, setTranslating] = useState(false)
+  const [translation, setTranslation] = useState<ScreenTranslationInfo | null>(null)
+  const [targetLanguage, setTargetLanguage] = useState(props.settings.translation.targetLanguage)
 
   const requestIdRef = useRef<string | null>(null)
   const dragStartRef = useRef<{ x: number; y: number } | null>(null)
@@ -180,6 +185,26 @@ export function ReadScreenModal(props: { settings: AppSettings; onClose: () => v
   const answerText = streamText || (result && result.observations) || ''
   const analysisDone = result !== null && (result.status === 'completed' || result.status === 'duplicate')
 
+  /** Local OCR + language engine on the selected region (or the whole source). */
+  const translateSelection = async (): Promise<void> => {
+    setTranslating(true)
+    setError(null)
+    setNotice(null)
+    try {
+      const res = await window.copilot.translateScreen({
+        ...(sourceId ? { sourceId } : {}),
+        ...(region ? { region } : {}),
+        targetLanguage
+      })
+      setTranslation(res)
+      if (!res.ok && res.message) setError(res.message)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Screen translation failed.')
+    } finally {
+      setTranslating(false)
+    }
+  }
+
   return (
     <div className="modal-backdrop" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal" role="dialog" aria-label="Read screen">
@@ -262,6 +287,84 @@ export function ReadScreenModal(props: { settings: AppSettings; onClose: () => v
           <span className="grow" />
           {running && <Spinner />}
         </div>
+
+        <div className="row wrap">
+          <select
+            value={targetLanguage}
+            onChange={(e) => setTargetLanguage(e.target.value)}
+            disabled={translating}
+            title="Target language for screen translation"
+          >
+            {TRANSLATION_LANGUAGES.map((l) => (
+              <option key={l.code} value={l.code}>
+                {l.label}
+              </option>
+            ))}
+          </select>
+          <button
+            className="secondary"
+            onClick={() => void translateSelection()}
+            disabled={translating || !sourceId || running}
+            title="Read the selected area with local OCR and translate it"
+          >
+            {translating ? 'Translating…' : region ? 'Translate selection' : 'Translate screen'}
+          </button>
+          {translating && <Spinner />}
+        </div>
+
+        {translation && (
+          <div className="card" style={{ marginTop: 4 }}>
+            <div className="row wrap">
+              <span className="section-title" style={{ margin: 0 }}>Screen translation</span>
+              <span className="grow" />
+              <span className="badge">{translation.ocrProvider}</span>
+              <span className="badge accent">{translation.translateProvider}</span>
+              {translation.detectedLanguage && <span className="badge">{translation.detectedLanguage}</span>}
+            </div>
+            {translation.original ? (
+              <>
+                <div className="iv-label" style={{ marginTop: 6 }}>Recognised text</div>
+                <div className="hint" style={{ whiteSpace: 'pre-wrap', userSelect: 'text' }}>
+                  {translation.original}
+                </div>
+              </>
+            ) : (
+              <div className="hint" style={{ marginTop: 6 }}>
+                {translation.message ?? 'No text was recognised.'}
+              </div>
+            )}
+            {translation.translated && (
+              <>
+                <div className="iv-label" style={{ marginTop: 8 }}>
+                  {TRANSLATION_LANGUAGES.find((l) => l.code === translation.targetLanguage)?.label ??
+                    translation.targetLanguage}
+                </div>
+                <div className="iv-answer" style={{ userSelect: 'text', whiteSpace: 'pre-wrap' }}>
+                  {translation.translated}
+                </div>
+              </>
+            )}
+            {translation.partial && translation.message && (
+              <div className="error-text" style={{ marginTop: 6 }}>{translation.message}</div>
+            )}
+            {translation.translated && (
+              <div className="answer-meta" style={{ marginTop: 6 }}>
+                <button className="meta-btn" onClick={() => void navigator.clipboard.writeText(translation.translated)}>
+                  copy translation
+                </button>
+                <button
+                  className="meta-btn"
+                  onClick={() => window.copilot.pushOverlayContent({ kind: 'caption', text: translation.translated })}
+                >
+                  send to overlay
+                </button>
+                <button className="meta-btn" onClick={() => void navigator.clipboard.writeText(translation.original)}>
+                  copy original
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
         {preview && (
           <div>
