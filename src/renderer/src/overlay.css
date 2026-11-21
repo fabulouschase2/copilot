@@ -6,7 +6,9 @@ html,
 body.overlay-body {
   margin: 0;
   padding: 0;
-  background: transparent !important;
+  /* The window is opaque (see overlay-window.ts); the body carries the
+     backing colour so the rounded card reads correctly. */
+  background: #0b0d11 !important;
   overflow: hidden;
   height: 100%;
   font-family: var(--font);

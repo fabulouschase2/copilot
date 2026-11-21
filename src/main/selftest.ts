@@ -1094,3 +1094,287 @@ export async function runCareerSelfTest(): Promise<void> {
     /* best-effort */
   }
 }
+
+/**
+ * Task 1 verification: does the REAL overlay window stay out of captures?
+ *
+ * Paints the overlay magenta through its own renderer, then measures the
+ * magenta share of four capture paths with exclusion off and on:
+ *   1. entire screen      — Chromium desktopCapturer (what Meet/Chrome use)
+ *   2. window capture     — desktopCapturer window sources
+ *   3. legacy GDI BitBlt  — PowerShell CopyFromScreen (older recorders)
+ *   4. PrintWindow        — the API many "window capture" tools call
+ *
+ * Everything is reported per path; a path that cannot run is reported as such.
+ */
+export async function runPrivacySelfTest(): Promise<void> {
+  const electron = (await import('electron')) as typeof import('electron')
+  const path = await import('node:path')
+  const { OverlayController } = await import('./overlay-window')
+  const { execFile } = await import('node:child_process')
+
+  const tmp = nodeFs.mkdtempSync(path.join(electron.app.getPath('temp'), 'copilot-priv-'))
+  let settings: import('../shared/protocol').OverlaySettings = {
+    enabled: false,
+    captureExcluded: false,
+    opacity: 1,
+    fontSize: 15,
+    showCaptions: true
+  }
+  const controller = new OverlayController({
+    userDataDir: tmp,
+    preloadPath: path.join(__dirname, '../preload/index.js'),
+    devUrl: null,
+    overlayHtml: path.join(__dirname, '../renderer/overlay.html'),
+    getSettings: () => settings,
+    persist: (patch) => {
+      settings = { ...settings, ...patch }
+      return settings
+    }
+  })
+  electron.ipcMain.handle('overlay:get-state', () => controller.getState())
+
+  controller.set({ enabled: true })
+  const win = electron.BrowserWindow.getAllWindows().find((w) => w.getTitle() === 'Copilot Overlay')
+  if (!win) {
+    // eslint-disable-next-line no-console
+    console.log('[selftest]', JSON.stringify({ ok: false, message: 'overlay window was not created' }))
+    controller.dispose()
+    return
+  }
+
+  // Opaque control window: proves the screen-capture path works at all.
+  const probe = new electron.BrowserWindow({
+    width: 240,
+    height: 120,
+    x: 40,
+    y: 40,
+    frame: false,
+    show: true,
+    backgroundColor: '#00FF00',
+    webPreferences: { sandbox: true, contextIsolation: true }
+  })
+  await probe.loadURL('data:text/html,<body style="margin:0;background:%2300FF00"></body>')
+  await new Promise((r) => setTimeout(r, 500))
+
+  // Wait for the document, then paint it magenta so pixels are unambiguous.
+  for (let i = 0; i < 40 && win.webContents.isLoading(); i += 1) {
+    await new Promise((r) => setTimeout(r, 150))
+  }
+  await win.webContents.executeJavaScript(`(() => {
+    document.documentElement.style.background = '#FF00FF';
+    document.body.style.background = '#FF00FF';
+    const root = document.querySelector('.overlay');
+    if (root) { root.style.background = '#FF00FF'; root.style.boxShadow = 'none'; }
+    return true;
+  })()`)
+  await new Promise((r) => setTimeout(r, 600))
+
+  /** Magenta share of a nativeImage (BGRA bitmap). */
+  const colorShare = (
+    img: Electron.NativeImage,
+    test: (r: number, g: number, b: number) => boolean
+  ): number => {
+    if (img.isEmpty()) return 0
+    const size = img.getSize()
+    const bgra = img.toBitmap()
+    const total = size.width * size.height
+    if (total === 0) return 0
+    let hits = 0
+    for (let i = 0; i < bgra.length; i += 4) {
+      const b = bgra[i]
+      const g = bgra[i + 1]
+      const r = bgra[i + 2]
+      if (test(r, g, b)) hits += 1
+    }
+    return hits / total
+  }
+  const magentaShare = (img: Electron.NativeImage): number =>
+    colorShare(img, (r, g, b) => r > 190 && g < 90 && b > 190)
+
+  const round = (n: number): number => Math.round(n * 100000) / 100000
+
+  const captureScreenShare = async (): Promise<{ share: number; count: number; perSource: number[] }> => {
+    const sources = await electron.desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: { width: 1280, height: 720 }
+    })
+    const usable = sources.filter((s) => !s.thumbnail.isEmpty())
+    const perSource = usable.map((s) => round(magentaShare(s.thumbnail)))
+    return { share: perSource.length > 0 ? Math.max(...perSource) : 0, count: usable.length, perSource }
+  }
+
+  const captureWindowShare = async (): Promise<{ share: number; listed: boolean }> => {
+    const sources = await electron.desktopCapturer.getSources({
+      types: ['window'],
+      thumbnailSize: { width: 720, height: 240 }
+    })
+    const source = sources.find((s) => s.name.includes('Copilot Overlay'))
+    if (!source) return { share: 0, listed: false }
+    return { share: magentaShare(source.thumbnail), listed: true }
+  }
+
+  /** Legacy GDI BitBlt capture through PowerShell + System.Drawing. */
+  const gdiCaptureTo = async (file: string, rect?: { x: number; y: number; width: number; height: number }): Promise<void> => {
+    const bounds = rect ?? { x: 0, y: 0, width: 0, height: 0 }
+    const script = [
+      'Add-Type -AssemblyName System.Drawing',
+      'Add-Type -AssemblyName System.Windows.Forms',
+      rect
+        ? `$x=${bounds.x}; $y=${bounds.y}; $w=${bounds.width}; $h=${bounds.height}`
+        : '$b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds; $x=$b.X; $y=$b.Y; $w=$b.Width; $h=$b.Height',
+      '$bmp = New-Object System.Drawing.Bitmap($w, $h)',
+      '$g = [System.Drawing.Graphics]::FromImage($bmp)',
+      '$g.CopyFromScreen($x, $y, 0, 0, $bmp.Size)',
+      `$bmp.Save('${file.replace(/'/g, "''")}', [System.Drawing.Imaging.ImageFormat]::Png)`,
+      '$g.Dispose(); $bmp.Dispose()'
+    ].join('; ')
+    await new Promise<void>((resolve, reject) => {
+      execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true }, (err) =>
+        err ? reject(err) : resolve()
+      )
+    })
+  }
+
+  const gdiShare = async (rect?: { x: number; y: number; width: number; height: number }): Promise<number> => {
+    const file = path.join(tmp, `gdi-${Date.now()}.png`)
+    await gdiCaptureTo(file, rect)
+    const share = magentaShare(electron.nativeImage.createFromPath(file))
+    try {
+      nodeFs.unlinkSync(file)
+    } catch {
+      /* best-effort */
+    }
+    return share
+  }
+
+  /** PrintWindow capture of the overlay's own HWND. */
+  const printWindowShare = async (): Promise<number> => {
+    const file = path.join(tmp, `pw-${Date.now()}.png`)
+    const handle = win.getNativeWindowHandle()
+    const hwnd = handle.length === 8 ? handle.readBigUInt64LE(0).toString() : String(handle.readUInt32LE(0))
+    const script = [
+      'Add-Type -AssemblyName System.Drawing',
+      'Add-Type -ReferencedAssemblies System.Drawing -TypeDefinition @"',
+      'using System; using System.Drawing; using System.Runtime.InteropServices;',
+      'public class Cap {',
+      '  [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr dc, uint f);',
+      '  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);',
+      '  public struct RECT { public int Left, Top, Right, Bottom; }',
+      '  public static void Save(long h, string path) {',
+      '    RECT r; GetWindowRect(new IntPtr(h), out r);',
+      '    int w = Math.Max(1, r.Right - r.Left), hh = Math.Max(1, r.Bottom - r.Top);',
+      '    using (var bmp = new Bitmap(w, hh)) using (var g = Graphics.FromImage(bmp)) {',
+      '      IntPtr dc = g.GetHdc(); PrintWindow(new IntPtr(h), dc, 2); g.ReleaseHdc(dc);',
+      '      bmp.Save(path, System.Drawing.Imaging.ImageFormat.Png);',
+      '    }',
+      '  }',
+      '}',
+      '"@',
+      `[Cap]::Save(${hwnd}, '${file.replace(/'/g, "''")}')`
+    ].join('\n')
+    await new Promise<void>((resolve, reject) => {
+      execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true }, (err) =>
+        err ? reject(err) : resolve()
+      )
+    })
+    const img = electron.nativeImage.createFromPath(file)
+    const share = magentaShare(img)
+    try {
+      nodeFs.unlinkSync(file)
+    } catch {
+      /* best-effort */
+    }
+    return share
+  }
+
+  const measure = async (): Promise<Record<string, unknown>> => {
+    const out: Record<string, unknown> = {}
+    // Control: an opaque window proves the screen-capture path itself works.
+    try {
+      const pb = probe.getBounds()
+      out.opaqueProbeRect = { x: pb.x, y: pb.y, w: pb.width, h: pb.height }
+      const file = path.join(tmp, `probe-${Date.now()}.png`)
+      await gdiCaptureTo(file, pb)
+      out.opaqueProbeShare = round(colorShare(electron.nativeImage.createFromPath(file), (r, g, b) => g > 150 && r < 100 && b < 100))
+      nodeFs.unlinkSync(file)
+    } catch (err) {
+      out.opaqueProbeShare = `error: ${err instanceof Error ? err.message : String(err)}`
+    }
+    try {
+      const screen = await captureScreenShare()
+      out.screenShare = round(screen.share)
+      out.screenSourceCount = screen.count
+      out.screenPerSource = screen.perSource
+    } catch (err) {
+      out.screenShare = `error: ${err instanceof Error ? err.message : String(err)}`
+    }
+    try {
+      const w = await captureWindowShare()
+      out.windowListed = w.listed
+      out.windowShare = round(w.share)
+    } catch (err) {
+      out.windowShare = `error: ${err instanceof Error ? err.message : String(err)}`
+    }
+    try {
+      out.gdiShare = round(await gdiShare())
+    } catch (err) {
+      out.gdiShare = `error: ${err instanceof Error ? err.message : String(err)}`
+    }
+    try {
+      const b = win.getBounds()
+      out.overlayRect = { x: b.x, y: b.y, w: b.width, h: b.height }
+      out.gdiOverlayRectShare = round(await gdiShare({ x: b.x, y: b.y, width: b.width, height: b.height }))
+    } catch (err) {
+      out.gdiOverlayRectShare = `error: ${err instanceof Error ? err.message : String(err)}`
+    }
+    try {
+      out.printWindowShare = round(await printWindowShare())
+    } catch (err) {
+      out.printWindowShare = `error: ${err instanceof Error ? err.message : String(err)}`
+    }
+    return out
+  }
+
+  const capturable = await measure()
+  const applied = controller.set({ captureExcluded: true })
+  await new Promise((r) => setTimeout(r, 900))
+  const excluded = await measure()
+
+  const report = {
+    osConfirmsExclusion: applied.exclusionActive,
+    affinity: applied.affinity,
+    display: electron.screen.getPrimaryDisplay().bounds,
+    capturable,
+    excluded,
+    screenHidden:
+      typeof capturable.screenShare === 'number' && typeof excluded.screenShare === 'number'
+        ? (capturable.screenShare as number) > 0.004 &&
+          (excluded.screenShare as number) < (capturable.screenShare as number) / 4
+        : 'unmeasured',
+    windowHidden:
+      typeof capturable.windowShare === 'number' && typeof excluded.windowShare === 'number'
+        ? (capturable.windowShare as number) > 0.2 && (excluded.windowShare as number) < 0.05
+        : 'unmeasured',
+    gdiRectHidden:
+      typeof capturable.gdiOverlayRectShare === 'number' && typeof excluded.gdiOverlayRectShare === 'number'
+        ? (capturable.gdiOverlayRectShare as number) > 0.05 &&
+          (excluded.gdiOverlayRectShare as number) < 0.01
+        : 'unmeasured',
+    // Window-source capture is expected NOT to hide; reported so the limitation
+    // is visible rather than implied away.
+    windowCaptureStillShowsOverlay:
+      typeof capturable.windowShare === 'number' && typeof excluded.windowShare === 'number'
+        ? (excluded.windowShare as number) > 0.2
+        : 'unmeasured'
+  }
+  // eslint-disable-next-line no-console
+  console.log('[selftest]', JSON.stringify(report))
+
+  controller.dispose()
+  try {
+    nodeFs.rmSync(tmp, { recursive: true, force: true })
+  } catch {
+    /* best-effort */
+  }
+}

@@ -230,8 +230,13 @@ export class OverlayController {
       minWidth: MIN_WIDTH,
       minHeight: MIN_HEIGHT,
       frame: false,
-      transparent: true,
-      backgroundColor: '#00000000',
+      // NOT transparent: with hardware acceleration disabled (a Stage 10 fix
+      // for black windows on hybrid GPUs) Windows does not composite a
+      // transparent BrowserWindow, so the overlay would never appear on
+      // screen. Measured: an opaque control window was captured at its rect
+      // (74% coverage) while the transparent overlay was absent (0%).
+      transparent: false,
+      backgroundColor: '#0b0d11',
       hasShadow: false,
       resizable: true,
       movable: true,

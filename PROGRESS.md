@@ -196,6 +196,35 @@ Verified:
 
 Evidence: `docs/resume-facts.md`.
 
+## Phase 6b — privacy verification and a real overlay defect (delivered)
+
+Task: verify the overlay against real capture paths; OBS/Meet were requested but are not
+available here (OBS not installed; Meet needs a second participant).
+
+Found and fixed:
+
+- **The overlay was never visible.** `transparent: true` combined with the app's
+  `disableHardwareAcceleration()` (a Stage 10 fix) means Windows never composites the window:
+  `isVisible()` said true while zero pixels were painted. Detected by measuring screen/GDI pixels
+  at the overlay rect (0% even with exclusion off). Fixed by making the window opaque; the card
+  styling is preserved.
+
+Measured on the fixed build (`COPILOT_SELFTEST=privacy`, real overlay painted magenta):
+
+| Path | Exclusion off | On |
+|---|---|---|
+| Chromium display capture | 17.7% | 0% |
+| GDI BitBlt (whole screen) | 14.8% | 0% |
+| GDI BitBlt (overlay rect) | 15.0% | 0% |
+| PrintWindow | 96.8% | 0% |
+| Chromium window capture | 98.6% | **98.4% (not hidden)** |
+
+An opaque control window (74.1% coverage in both states) proves the capture paths themselves work.
+
+Documented: display capture and legacy recorders honour exclusion; Chromium window-source capture
+does not, so “share this specific window” must not be relied on. OBS and Meet remain unverified
+(see `docs/overlay-capture-exclusion.md`).
+
 ## Remaining phases
 
 Tracked in `FEATURE_STATUS.md`. Cloud sync, billing and the phone companion require

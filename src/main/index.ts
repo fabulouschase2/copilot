@@ -114,6 +114,13 @@ if (!SINGLE_INSTANCE_LOCK) {
       })
       return
     }
+    if (process.env['COPILOT_SELFTEST'] === 'privacy') {
+      void import('./selftest').then(async ({ runPrivacySelfTest }) => {
+        await runPrivacySelfTest()
+        app.exit(0)
+      })
+      return
+    }
     if (process.env['COPILOT_SELFTEST'] === 'provider-setup') {
       void import('./selftest').then(async ({ runProviderSetup }) => {
         await runProviderSetup()

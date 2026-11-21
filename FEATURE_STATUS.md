@@ -18,7 +18,7 @@ Last updated: 2026-11-21 (after Phase 6).
 | Live translation | Missing | **Implemented + verified** (local model) | `docs/live-translation.md`: EN→ES 3.7 s, live event pipeline |
 | Screen intelligence (question, coding, documents) | Working | Working | Vision provider required |
 | Screen translation | Missing | Partial — the language engine translates text, but there is no screen-region translate action yet | Phase 5 remaining |
-| Private overlay | Deliberately excluded | **Implemented + verified** | `docs/overlay-capture-exclusion.md` |
+| Private overlay | Deliberately excluded | **Implemented + verified** | Display capture/GDI/PrintWindow exclude it; window-source capture does not (documented) |
 | Capture exclusion | Deliberately excluded | **Implemented + verified** (overlay only) | 8.21% → 0% magenta share |
 | Meeting intelligence | Working (summary, actions, search, export) | Working | Transcripts isolated per session |
 | Practice interviews | Working (7 types, scorecards) | Working | `docs/transformation-report.md` |

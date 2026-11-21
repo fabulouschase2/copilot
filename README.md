@@ -128,8 +128,9 @@ is bounded, so slow models drop old lines (and say so) instead of falling minute
 **Overlay** opens a frameless, always-on-top window with live captions and the latest answer
 (`Ctrl+Alt+O`). On Windows 10 2004+ the window is marked `WDA_EXCLUDEFROMCAPTURE`, so capture
 APIs that honour the flag omit it. The panel shows the OS-reported affinity — not the setting
-you asked for — plus the Win32 error code when the call fails. See
-`docs/overlay-capture-exclusion.md` for what was measured and what was not.
+you asked for — plus the Win32 error code when the call fails. Measured: entire-screen sharing,
+GDI recording and PrintWindow omit it; sharing *this specific window* (window-source capture) still
+shows it. See `docs/overlay-capture-exclusion.md` for the measured matrix and limits.
 
 ## Screen analysis
 

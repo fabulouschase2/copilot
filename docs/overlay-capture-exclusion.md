@@ -93,3 +93,51 @@ applications, and the desktop are never modified.
 - No screen content is recorded, transmitted, or stored by the overlay.
 - No attempt is made to evade proctoring, monitoring, or assessment controls.
 - Users must follow the rules of their meeting, workplace, or assessment.
+
+## Correction and full capture-path matrix (2026-11-21)
+
+**A defect was found while verifying this properly.** The overlay window was created with
+`transparent: true` while the app disables hardware acceleration (a Stage 10 fix for black windows
+on hybrid GPUs). Windows does not composite a transparent BrowserWindow in that configuration, so
+the overlay was **never actually visible on screen** — `BrowserWindow.isVisible()` returned true,
+but nothing was painted. It was only detectable by measuring screen pixels.
+
+Fixed by making the overlay window opaque (`transparent: false`, solid background). The card look
+is preserved by painting the backing colour behind the rounded card.
+
+### Measured, with the fixed build
+
+`COPILOT_SELFTEST=privacy` paints the real overlay magenta, then measures the magenta share of four
+capture paths with exclusion off and on. Control: an opaque 240×120 window at (40,40) captured
+through GDI shows **74.1%** coverage in both states, proving the capture paths work.
+
+| Capture path | Exclusion off | Exclusion on | Result |
+|---|---|---|---|
+| Chromium display capture (`desktopCapturer`, screen source) | 17.7% | **0%** | hidden |
+| GDI `BitBlt` (PowerShell `CopyFromScreen`, whole screen) | 14.8% | **0%** | hidden |
+| GDI `BitBlt` of the overlay's own rectangle | 15.0% | **0%** | hidden |
+| `PrintWindow(PW_RENDERFULLCONTENT)` on the overlay HWND | 96.8% | **0%** | hidden |
+| Chromium window capture (window source for the overlay) | 98.6% | **98.4%** | **NOT hidden** |
+
+Reproduce:
+
+```powershell
+$env:COPILOT_SELFTEST='privacy'; .\node_modules\electron\dist\electron.exe .
+```
+
+### What this means in practice
+
+- **Entire-screen sharing / display recording** (Google Meet "entire screen", Chromium
+  `getDisplayMedia`, OBS display capture, most recorders using GDI or WGC): the overlay is
+  excluded where the OS honours the flag.
+- **Individual-window capture of the overlay itself**: Chromium's window-source path still returns
+  the window's own surface. Do not rely on exclusion against "share this specific window".
+- **`PrintWindow`-based tools**: excluded (returns nothing) — but note Chromium does not implement
+  `WM_PRINT`, so this path is unreliable for Electron windows in general.
+
+### Still not verified
+
+- **OBS Studio** is not installed on this machine, so its DXGI/WGC paths were not exercised
+  directly. The Chromium display path and GDI cover the same OS-level exclusion mechanism.
+- **Google Meet with a second participant** could not be tested: verifying what a remote peer sees
+  requires a second account/device. The local display-capture path it uses is measured above.
