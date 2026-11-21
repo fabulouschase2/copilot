@@ -57,7 +57,7 @@ import type { TranslationService } from './services/translation/translation-serv
 import type { StoryBankService } from './services/stories/story-service'
 import type { ResumeExtractionService } from './services/career/resume-facts'
 import type { OverlayController } from './overlay-window'
-import { OverlayContentSchema, OverlaySetRequestSchema, WhisperConfigureRequestSchema, StoryDraftRequestSchema, StoryIdRequestSchema, StoryUpsertRequestSchema, DocumentIdRequestSchema } from '../shared/protocol'
+import { OverlayContentSchema, OverlaySetRequestSchema, WhisperConfigureRequestSchema, StoryDraftRequestSchema, StoryIdRequestSchema, StoryUpsertRequestSchema, DocumentIdRequestSchema, ProviderRoutesRequestSchema } from '../shared/protocol'
 
 export interface IpcDeps {
   settings: SettingsStore
@@ -199,6 +199,16 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   })
 
   ipcMain.handle(IPC.providersList, (): ProviderInfo[] => registry.list())
+
+  ipcMain.handle(IPC.providersRoutes, (_e, raw: unknown) => {
+    const parsed = ProviderRoutesRequestSchema.safeParse(raw ?? {})
+    if (!parsed.success) return { routes: [], cloudBlockedReason: null }
+    const plan = registry.plan({ kind: parsed.data.kind, sensitivity: parsed.data.sensitivity })
+    return {
+      routes: plan.routes.map((r) => ({ id: r.id, label: r.label, model: r.model, kind: r.kind })),
+      cloudBlockedReason: plan.cloudBlockedReason
+    }
+  })
 
   // Transcription provider key management: list (with hasCredential, no
   // secrets) + per-provider connection test using the stored credential.

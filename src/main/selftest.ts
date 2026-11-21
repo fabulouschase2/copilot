@@ -906,6 +906,7 @@ export async function runUiSelfTest(): Promise<void> {
   electron.ipcMain.handle('practice:list', () => ({ sessions: [] }))
   electron.ipcMain.handle('meetings:list', () => ({ meetings: [] }))
   electron.ipcMain.handle('providers:list', () => ({ providers: [] }))
+  electron.ipcMain.handle('providers:routes', () => ({ routes: [], cloudBlockedReason: null }))
   electron.ipcMain.handle('stt:providers-list', () => ({ providers: [] }))
   electron.ipcMain.handle('whisper:status', () => whisperState)
   electron.ipcMain.handle('audio:diagnostics', () => ({

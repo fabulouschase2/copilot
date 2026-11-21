@@ -23,6 +23,7 @@ import {
   DocumentIdRequestSchema,
   OverlayContentSchema,
   OverlaySetRequestSchema,
+  ProviderRoutesRequestSchema,
   StoryDraftRequestSchema,
   StoryIdRequestSchema,
   StoryUpsertRequestSchema,
@@ -64,6 +65,11 @@ const api: CopilotApi = {
   setSettings: (settings: AppSettings): Promise<AppSettings> =>
     ipcRenderer.invoke(IPC.settingsSet, settings),
   listProviders: (): Promise<ProviderInfo[]> => ipcRenderer.invoke(IPC.providersList),
+  listRoutes: (kind?: 'chat' | 'vision', sensitivity?: 'normal' | 'private') =>
+    ipcRenderer.invoke(
+      IPC.providersRoutes,
+      ProviderRoutesRequestSchema.parse({ kind, sensitivity })
+    ),
   testProvider: (providerId: string): Promise<ProviderTestResult> =>
     ipcRenderer.invoke(IPC.providersTest, { providerId }),
   setCredential: (providerId: string, secret: string): Promise<CredentialResult> =>

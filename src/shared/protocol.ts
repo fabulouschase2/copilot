@@ -13,6 +13,7 @@ export const IPC = {
   settingsSet: 'settings:set',
   providersList: 'providers:list',
   providersTest: 'providers:test',
+  providersRoutes: 'providers:routes',
   credentialsSet: 'credentials:set',
   credentialsRemove: 'credentials:remove',
   chatSend: 'chat:send',
@@ -152,6 +153,17 @@ export const ChatErrorEventSchema = z.object({
 export const ProvidersTestRequestSchema = z.object({
   providerId: z.string().min(1).max(64)
 })
+
+export const ProviderRoutesRequestSchema = z.object({
+  kind: z.enum(['chat', 'vision']).optional(),
+  sensitivity: z.enum(['normal', 'private']).optional()
+})
+export type ProviderRoutesRequest = z.infer<typeof ProviderRoutesRequestSchema>
+
+export interface ProviderRoutesResult {
+  routes: ProviderRoute[]
+  cloudBlockedReason: 'mode-local' | 'privacy' | null
+}
 
 export const CredentialSetRequestSchema = z.object({
   providerId: z.string().min(1).max(64),
@@ -1051,9 +1063,34 @@ export const StoryDraftRequestSchema = z.object({
 })
 export type StoryDraftRequest = z.infer<typeof StoryDraftRequestSchema>
 
+export type ProviderKind = 'local' | 'cloud'
+
+/**
+ * AI operating mode. `hybrid` is the default: local first, cloud only when the
+ * task permits it and the user has allowed it.
+ */
+export const AiModeSchema = z.enum(['local', 'cloud', 'hybrid'])
+export type AiMode = z.infer<typeof AiModeSchema>
+
+/** A concrete provider+model the router may use. */
+export interface ProviderRoute {
+  id: string
+  label: string
+  model: string
+  kind: ProviderKind
+}
+
 export const AppSettingsSchema = z.object({
   providers: z.array(ProviderConfigSchema).max(20).default([]),
   activeProviderId: z.string().min(1).max(64).nullable().default(null),
+  /** Local-only, cloud-only, or hybrid routing (default). */
+  aiMode: AiModeSchema.default('hybrid'),
+  /**
+   * Whether private material (screen captures, meeting audio, career facts) may
+   * be sent to a cloud provider. Off by default: private data stays local unless
+   * the user explicitly opts in.
+   */
+  allowCloudPrivate: z.boolean().default(false),
   theme: z.enum(['dark', 'light']).default('dark'),
   responseMode: z.enum(['concise', 'detailed']).default('concise'),
   /**
@@ -1301,6 +1338,8 @@ export interface CopilotApi {
   getSettings(): Promise<AppSettings>
   setSettings(settings: AppSettings): Promise<AppSettings>
   listProviders(): Promise<ProviderInfo[]>
+  /** Providers this build may use, in routing order (mode + capability aware). */
+  listRoutes(kind?: 'chat' | 'vision', sensitivity?: 'normal' | 'private'): Promise<ProviderRoutesResult>
   testProvider(providerId: string): Promise<ProviderTestResult>
   setCredential(providerId: string, secret: string): Promise<CredentialResult>
   removeCredential(providerId: string): Promise<CredentialResult>

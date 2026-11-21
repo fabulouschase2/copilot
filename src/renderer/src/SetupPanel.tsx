@@ -8,6 +8,7 @@ import {
 } from '../../shared/protocol'
 import { SetupProvidersInline, SetupSttInline } from './SetupProvidersInline'
 import { WhisperPanel } from './WhisperPanel'
+import { AiModePanel } from './AiModePanel'
 import { KeyField } from './KeyField'
 
 /**
@@ -564,6 +565,7 @@ function ProviderEditor(props: { settings: AppSettings; onChange: (s: AppSetting
   const { settings, onChange } = props
   return (
     <>
+      <AiModePanel settings={settings} onChange={onChange} />
       <div className="section-title">Chat providers</div>
       <SetupProvidersInline settings={settings} onChange={onChange} />
       <div className="section-title">Transcription providers</div>
