@@ -987,3 +987,110 @@ export async function runUiSelfTest(): Promise<void> {
   console.log('[selftest]', JSON.stringify(report))
   win.destroy()
 }
+
+/**
+ * Phase 2 completion verification: extract facts from a résumé with a real
+ * model, then prove the two guarantees end to end:
+ *   1. every stored fact's quote appears in the document (no fabrication);
+ *   2. pending facts are invisible to retrieval until confirmed.
+ */
+export async function runCareerSelfTest(): Promise<void> {
+  const path = await import('node:path')
+  const { SQLiteStore } = await import('./services/context/sqlite-store')
+  const { ResumeExtractionService, normalizeForMatch } = await import('./services/career/resume-facts')
+  const { ContextService } = await import('./services/context/context-service')
+  const { ContextEngine } = await import('./services/context-engine')
+  const { OpenAICompatibleProvider } = await import('./services/providers/openai-compatible')
+
+  const baseUrl = process.env['COPILOT_TRANSLATE_BASEURL'] ?? 'http://127.0.0.1:11434/v1'
+  const model = process.env['COPILOT_TRANSLATE_MODEL'] ?? 'qwen2.5:1.5b'
+  const provider = new OpenAICompatibleProvider({
+    id: 'selftest-ollama',
+    label: 'Ollama (self-test)',
+    baseUrl,
+    apiKey: '',
+    model,
+    vision: false
+  })
+
+  const docText = [
+    'Jordan Avery — Senior Software Engineer',
+    'Acme Payments, 2019-2024. Led a team of four engineers on a payments platform.',
+    'Reduced CI build times by 40 percent by caching dependencies and sharding tests.',
+    'Migrated 12 services from JavaScript to TypeScript.',
+    'Skills: TypeScript, Node.js, SQLite, Electron, React.'
+  ].join('\n')
+
+  const tmp = nodeFs.mkdtempSync(path.join(await import('electron').then((e) => e.app.getPath('temp')), 'copilot-career-'))
+  const store = new SQLiteStore(path.join(tmp, 'context.db'))
+  const now = new Date().toISOString()
+  store.addDocument({
+    sourceId: 'doc-resume',
+    displayName: 'resume.txt',
+    text: docText,
+    status: 'ready',
+    createdAt: now,
+    updatedAt: now
+  })
+
+  const service = new ResumeExtractionService({
+    listDocuments: () => store.listDocuments(),
+    addFact: (fact) => store.addFact(fact),
+    resolveProvider: () => ({ provider, model }),
+    getProfileId: () => 'default'
+  })
+
+  const t0 = Date.now()
+  const result = await service.extractFromDocument('doc-resume')
+  const elapsedMs = Date.now() - t0
+
+  const facts = store.listFacts('default')
+  const docNorm = normalizeForMatch(docText)
+  const quotesAnchored = facts.every((f) => normalizeForMatch(f.sourceText ?? '').length > 0 && docNorm.includes(normalizeForMatch(f.sourceText ?? '')))
+  const allPending = facts.every((f) => f.status === 'pending')
+
+  // Confirm exactly one fact and verify retrieval separation.
+  let confirmedVisible = false
+  let pendingHidden = false
+  if (facts.length > 0) {
+    store.setFactStatus(facts[0].factId, 'confirmed', new Date().toISOString())
+    const ctx = new ContextService({
+      store,
+      engine: new ContextEngine(),
+      settings: () => ({ totalTokenBudget: 1_200, perSourceCharBudget: 1_200, minScore: 0.01 })
+    })
+    const retrieved = ctx.retrieve('team engineers build times TypeScript', {
+      includeDocuments: false,
+      includeProfile: true,
+      includeSession: false
+    })
+    const ids = new Set(retrieved.items.map((i) => i.sourceId))
+    confirmedVisible = ids.has(facts[0].factId)
+    pendingHidden = facts.slice(1).every((f) => !ids.has(f.factId))
+  }
+
+  const report = {
+    provider: provider.label,
+    model,
+    ok: result.ok,
+    added: result.added,
+    rejected: result.rejected.length,
+    rejectedReasons: result.rejected.slice(0, 3).map((r) => r.reason),
+    elapsedMs,
+    stored: facts.length,
+    allPending,
+    quotesAnchored,
+    confirmedVisible,
+    pendingHidden,
+    message: result.message
+  }
+  // eslint-disable-next-line no-console
+  console.log('[selftest]', JSON.stringify(report))
+
+  store.close()
+  try {
+    nodeFs.rmSync(tmp, { recursive: true, force: true })
+  } catch {
+    /* best-effort */
+  }
+}

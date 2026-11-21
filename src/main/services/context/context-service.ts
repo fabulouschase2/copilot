@@ -20,20 +20,23 @@ import {
   RetrievedItem
 } from '../../../shared/protocol'
 import { extractDocument, isSupportedFileName } from './document-extract'
+import { extractDocx } from './docx-extract'
 import { extractPdfFromFile } from './pdf-extract'
 import { estimateTokens, rank, renderContextBlock, RankedItem, RankableItem } from './ranking'
 
 /** Minimal store contract so tests can substitute the file-backed store. */
 export interface ContextStoreLike {
   listDocuments(): Array<{ sourceId: string; displayName: string; text: string; status: 'ready' | 'partial'; createdAt: string; updatedAt: string }>
-  listFacts(profileId?: string): Array<{ factId: string; text: string; category: ProfileCategory; origin: 'user' | 'model'; createdAt: string; updatedAt: string; profileId: string }>
+  listFacts(profileId?: string): Array<{ factId: string; text: string; category: ProfileCategory; origin: 'user' | 'model'; status?: 'pending' | 'confirmed' | 'rejected'; sourceText?: string | null; sourceDocumentId?: string | null; createdAt: string; updatedAt: string; profileId: string }>
   isExcluded(sourceId: string, type: string): boolean
   setExcluded(sourceId: string | undefined, type: string | undefined, excluded: boolean): void
   addDocument(doc: { sourceId: string; displayName: string; text: string; status: 'ready' | 'partial'; createdAt: string; updatedAt: string }): void
   removeDocument(sourceId: string): void
-  addFact(fact: { factId: string; text: string; category: ProfileCategory; origin: 'user' | 'model'; createdAt: string; updatedAt: string; profileId: string }): void
+  addFact(fact: { factId: string; text: string; category: ProfileCategory; origin: 'user' | 'model'; status?: 'pending' | 'confirmed' | 'rejected'; sourceText?: string | null; sourceDocumentId?: string | null; createdAt: string; updatedAt: string; profileId: string }): void
   updateFact(factId: string, patch: { text?: string; category?: ProfileCategory }): boolean
   removeFact(factId: string): boolean
+  /** Confirmation lifecycle (schema v5); stores that predate it may omit. */
+  setFactStatus?(factId: string, status: 'pending' | 'confirmed' | 'rejected', updatedAt: string): boolean
   /** Profile management; supported by the SQLite store (tests may omit). */
   listProfiles?(): Array<{ profileId: string; name: string; createdAt: string; updatedAt: string }>
   upsertProfile?(profile: { profileId: string; name: string; createdAt: string; updatedAt: string }): void
@@ -101,7 +104,7 @@ export class ContextService {
       title: 'Import documents',
       properties: ['openFile', 'multiSelections'],
       filters: [
-        { name: 'Resume & documents (PDF, TXT, MD)', extensions: ['pdf', 'txt', 'md', 'markdown'] }
+        { name: 'Resume & documents (PDF, DOCX, TXT, MD)', extensions: ['pdf', 'docx', 'txt', 'md', 'markdown'] }
       ]
     })
     if (picked.canceled || picked.filePaths.length === 0) return []
@@ -109,6 +112,43 @@ export class ContextService {
     const results: Array<{ sourceId: string; displayName: string; status: string; extractedChars: number; message?: string }> = []
     for (const filePath of picked.filePaths.slice(0, 20)) {
       const displayName = filePath.replace(/^.*[/\\]/, '')
+      if (displayName.toLowerCase().endsWith('.docx')) {
+        // DOCX = ZIP + WordprocessingML; extracted without a heavy dependency.
+        try {
+          const bytes = new Uint8Array(await fs.promises.readFile(filePath))
+          const docx = extractDocx(displayName, bytes)
+          if (docx.status === 'failed') {
+            results.push({
+              sourceId: `doc-${Date.now().toString(36)}`,
+              displayName,
+              status: 'failed',
+              extractedChars: 0,
+              message: docx.message
+            })
+            continue
+          }
+          const sourceId = `doc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+          const now = new Date().toISOString()
+          this.deps.store.addDocument({
+            sourceId,
+            displayName,
+            text: docx.text,
+            status: docx.status === 'partial' ? 'partial' : 'ready',
+            createdAt: now,
+            updatedAt: now
+          })
+          results.push({ sourceId, displayName, status: docx.status, extractedChars: docx.text.length })
+        } catch (err) {
+          results.push({
+            sourceId: `doc-${Date.now().toString(36)}`,
+            displayName,
+            status: 'failed',
+            extractedChars: 0,
+            message: err instanceof Error ? err.message : 'Could not read file'
+          })
+        }
+        continue
+      }
       if (displayName.toLowerCase().endsWith('.pdf')) {
         // PDFs need their own async extractor (binary parsing, page-bounded).
         const pdfResult = await extractPdfFromFile(filePath)
@@ -233,7 +273,43 @@ export class ContextService {
         const ok = this.deps.store.removeFact(op.factId)
         return ok ? { ok: true } : { ok: false, message: 'Unknown fact id' }
       }
+      case 'confirm':
+      case 'reject': {
+        if (!this.deps.store.setFactStatus) {
+          return { ok: false, message: 'This store does not support fact confirmation.' }
+        }
+        const status = op.op === 'confirm' ? 'confirmed' : 'rejected'
+        const ok = this.deps.store.setFactStatus(op.factId, status, new Date().toISOString())
+        return ok ? { ok: true } : { ok: false, message: 'Unknown fact id' }
+      }
     }
+  }
+
+  /** Full fact rows (including provenance) for the confirmation UI. */
+  listFactDetails(): Array<{
+    factId: string
+    text: string
+    category: ProfileCategory
+    origin: 'user' | 'model'
+    status: 'pending' | 'confirmed' | 'rejected'
+    sourceText: string | null
+    sourceDocumentId: string | null
+    createdAt: string
+    updatedAt: string
+    profileId: string
+  }> {
+    return this.deps.store.listFacts(this.profileId).map((f) => ({
+      factId: f.factId,
+      text: f.text,
+      category: f.category,
+      origin: f.origin,
+      status: f.status ?? 'confirmed',
+      sourceText: f.sourceText ?? null,
+      sourceDocumentId: f.sourceDocumentId ?? null,
+      createdAt: f.createdAt,
+      updatedAt: f.updatedAt,
+      profileId: f.profileId
+    }))
   }
 
   /* ── personal profiles (transformation) ─────────────────────────────── */
@@ -350,6 +426,9 @@ export class ContextService {
     }
     if (options.includeProfile) {
       for (const fact of this.deps.store.listFacts(this.profileId)) {
+        // Only confirmed facts are verified experience; pending/rejected never
+        // reach a model.
+        if ((fact.status ?? 'confirmed') !== 'confirmed') continue
         if (this.deps.store.isExcluded(fact.factId, 'profile')) continue
         candidates.push({
           itemId: fact.factId,

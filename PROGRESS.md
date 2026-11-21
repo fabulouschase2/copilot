@@ -167,6 +167,35 @@ Done in this pass:
 Still open for a full Phase 11: signed installer (no certificate), installer uninstall/reinstall
 cycle, migration test against a real user database, and a sustained memory test on 8 GB hardware.
 
+## Phase 2b — résumé import and verified facts (delivered)
+
+Implemented:
+
+- **DOCX import** with no new dependency: ZIP central directory → inflate `word/document.xml` →
+  WordprocessingML to text (paragraphs, tabs, tables), with explicit failures for renamed .doc,
+  missing bodies, encryption and oversized files.
+- **Fact lifecycle (schema v5)**: `pending` / `confirmed` / `rejected` plus `source_text` and
+  `source_document_id`. Existing facts default to confirmed; nothing is lost.
+- **Quote-anchored extraction**: a model-proposed fact is stored only when its quote appears
+  verbatim in the document; everything else is rejected with a reason and counted.
+- Settings UI: pending facts with Confirm / Reject and their source quote, inline edit, restore,
+  and an “Extract facts” action per document.
+- Retrieval, practice and story drafts now use **confirmed facts only**.
+- Migration robustness: table creation is idempotent and independent of the version marker, so a
+  database with an inconsistent marker no longer fails at startup.
+
+Verified:
+
+- `COPILOT_SELFTEST=career` with Ollama: 2 facts extracted, both pending, **quotesAnchored: true**,
+  confirmed fact retrieved, pending fact hidden.
+- `tests/career-facts-phase2b.test.ts`: 21 tests (DOCX archive variants, quote anchoring,
+  rejection reasons, dedupe/cap, service errors, schema v5 round-trip, v4→v5 upgrade, retrieval
+  filtering).
+- Full suite: **374 / 374 passed** (44 files); typecheck and build clean.
+- Test counts in README/TESTING/FEATURE_STATUS reconciled to the actual suite (374, 44 files).
+
+Evidence: `docs/resume-facts.md`.
+
 ## Remaining phases
 
 Tracked in `FEATURE_STATUS.md`. Cloud sync, billing and the phone companion require

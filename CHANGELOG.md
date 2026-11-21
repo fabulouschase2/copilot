@@ -6,6 +6,11 @@ All notable user-facing changes. Versions follow the app's `package.json`.
 
 ### Added
 
+- **DOCX résumé import**: Word documents now import alongside PDF/TXT/MD, without adding a
+  document-processing dependency.
+- **Verified career facts**: facts extracted from your documents arrive as *pending* with the exact
+  source quote, and only become verified experience when you confirm them. You can edit, reject and
+  restore them; rejected and pending facts are never sent to a model. Adds SQLite schema v5.
 - **Career Story Bank** (Phase 2): keep your own experiences in STAR, CAR, PAR, SOAR or
   answer-first form, search them, and let the Interview view attach the most relevant ones to
   each question. Drafts can be generated from confirmed profile facts and are never saved

@@ -55,8 +55,9 @@ import { SttRegistry } from './services/stt/stt-registry'
 import type { PracticeService } from './services/practice/practice-service'
 import type { TranslationService } from './services/translation/translation-service'
 import type { StoryBankService } from './services/stories/story-service'
+import type { ResumeExtractionService } from './services/career/resume-facts'
 import type { OverlayController } from './overlay-window'
-import { OverlayContentSchema, OverlaySetRequestSchema, WhisperConfigureRequestSchema, StoryDraftRequestSchema, StoryIdRequestSchema, StoryUpsertRequestSchema } from '../shared/protocol'
+import { OverlayContentSchema, OverlaySetRequestSchema, WhisperConfigureRequestSchema, StoryDraftRequestSchema, StoryIdRequestSchema, StoryUpsertRequestSchema, DocumentIdRequestSchema } from '../shared/protocol'
 
 export interface IpcDeps {
   settings: SettingsStore
@@ -73,6 +74,7 @@ export interface IpcDeps {
   overlay: OverlayController
   translation: TranslationService
   stories: StoryBankService
+  resumeFacts: ResumeExtractionService
   getWindow: () => BrowserWindow | null
   persistence: {
     status: () => import('../shared/protocol').ContextPersistenceStatus
@@ -345,6 +347,16 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     const parsed = ContextPreviewRequestSchema.safeParse(raw)
     if (!parsed.success) return { items: [], estimatedTokens: 0 }
     return context.preview(parsed.data)
+  })
+
+  /* ── Fact lifecycle & résumé extraction (Phase 2 completion) ─────────── */
+
+  ipcMain.handle(IPC.contextFactsDetail, () => ({ facts: context.listFactDetails() }))
+
+  ipcMain.handle(IPC.contextExtractFacts, (_e, raw: unknown) => {
+    const parsed = DocumentIdRequestSchema.safeParse(raw)
+    if (!parsed.success) return { ok: false, added: 0, rejected: [], message: 'Invalid document id' }
+    return deps.resumeFacts.extractFromDocument(parsed.data.documentId)
   })
 
   ipcMain.on(IPC.contextClearSession, () => context.clearSessionContext())

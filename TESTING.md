@@ -3,7 +3,7 @@
 ## Automated
 
 ```powershell
-npm test            # vitest: 353 tests, 43 files (after Phase 2)
+npm test            # vitest: 374 tests, 44 files (after Phase 2 completion)
 npm run typecheck   # tsc, main + renderer
 npm run build       # electron-vite production build
 ```

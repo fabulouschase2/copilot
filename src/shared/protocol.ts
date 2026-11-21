@@ -50,6 +50,8 @@ export const IPC = {
   contextProfileOp: 'context:profile-op',
   contextExclusion: 'context:exclusion',
   contextPreview: 'context:preview',
+  contextFactsDetail: 'context:facts-detail',
+  contextExtractFacts: 'context:extract-facts',
   contextClearSession: 'context:clear-session',
   contextRemoveDocument: 'context:remove-document',
   chatContext: 'chat:context',
@@ -449,9 +451,51 @@ export const ProfileFactOpSchema = z.discriminatedUnion('op', [
   z.object({
     op: z.literal('remove'),
     factId: z.string().min(1).max(64)
+  }),
+  z.object({
+    op: z.literal('confirm'),
+    factId: z.string().min(1).max(64)
+  }),
+  z.object({
+    op: z.literal('reject'),
+    factId: z.string().min(1).max(64)
   })
 ])
 export type ProfileFactOp = z.infer<typeof ProfileFactOpSchema>
+
+/**
+ * Fact lifecycle. Only `confirmed` facts are treated as verified experience
+ * and become retrievable context; `pending` awaits the user's review.
+ */
+export const FactStatusSchema = z.enum(['pending', 'confirmed', 'rejected'])
+export type FactStatus = z.infer<typeof FactStatusSchema>
+
+/** Fact row with provenance, used by the confirmation UI. */
+export interface ProfileFactDetail {
+  factId: string
+  text: string
+  category: ProfileCategory
+  origin: 'user' | 'model'
+  status: FactStatus
+  /** Verbatim supporting phrase from the source document, when extracted. */
+  sourceText: string | null
+  sourceDocumentId: string | null
+  createdAt: string
+  updatedAt: string
+  profileId: string
+}
+
+export const DocumentIdRequestSchema = z.object({
+  documentId: z.string().min(1).max(128)
+})
+
+export interface FactExtractionResult {
+  ok: boolean
+  added: number
+  rejected: Array<{ text: string; reason: string }>
+  providerLabel?: string
+  message?: string
+}
 
 export const ContextExclusionSchema = z
   .object({
@@ -1295,6 +1339,8 @@ export interface CopilotApi {
   }>
   importDocuments(): Promise<{ results: z.infer<typeof ContextImportResultSchema>[] }>
   applyProfileOp(op: ProfileFactOp): Promise<{ ok: boolean; message?: string }>
+  listFactDetails(): Promise<{ facts: ProfileFactDetail[] }>
+  extractFacts(documentId: string): Promise<FactExtractionResult>
   setContextExclusion(req: z.infer<typeof ContextExclusionSchema>): Promise<{ ok: boolean }>
   removeDocument(sourceId: string): Promise<{ ok: boolean }>
   setJobDescription(text: string): Promise<{ ok: boolean; message?: string }>

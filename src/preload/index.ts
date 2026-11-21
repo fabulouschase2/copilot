@@ -20,6 +20,7 @@ import {
   MeetingGenerateRequestSchema,
   ModeQuestion,
   NotesExportRequestSchema,
+  DocumentIdRequestSchema,
   OverlayContentSchema,
   OverlaySetRequestSchema,
   StoryDraftRequestSchema,
@@ -105,6 +106,9 @@ const api: CopilotApi = {
   importDocuments: () => ipcRenderer.invoke(IPC.contextImport),
   applyProfileOp: (op: ProfileFactOp) =>
     ipcRenderer.invoke(IPC.contextProfileOp, ProfileFactOpSchema.parse(op)),
+  listFactDetails: () => ipcRenderer.invoke(IPC.contextFactsDetail),
+  extractFacts: (documentId: string) =>
+    ipcRenderer.invoke(IPC.contextExtractFacts, DocumentIdRequestSchema.parse({ documentId })),
   setContextExclusion: (req: { sourceId?: string; type?: string; excluded: boolean }) =>
     ipcRenderer.invoke(IPC.contextExclusion, ContextExclusionSchema.parse(req)),
   removeDocument: (sourceId: string) => ipcRenderer.invoke(IPC.contextRemoveDocument, sourceId),

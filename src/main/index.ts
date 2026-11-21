@@ -21,6 +21,7 @@ import { MeetingSaveRequestSchema, WhisperConfigureRequest } from '../shared/pro
 import { LocalWhisperManager, detectWhisperInstalls } from './services/stt/local-whisper'
 import { TranslationService } from './services/translation/translation-service'
 import { StoryBankService } from './services/stories/story-service'
+import { ResumeExtractionService } from './services/career/resume-facts'
 import { ModesService } from './services/modes/modes-service'
 import { OverlayController } from './overlay-window'
 import { PracticeService } from './services/practice/practice-service'
@@ -102,6 +103,13 @@ if (!SINGLE_INSTANCE_LOCK) {
     if (process.env['COPILOT_SELFTEST'] === 'ui') {
       void import('./selftest').then(async ({ runUiSelfTest }) => {
         await runUiSelfTest()
+        app.exit(0)
+      })
+      return
+    }
+    if (process.env['COPILOT_SELFTEST'] === 'career') {
+      void import('./selftest').then(async ({ runCareerSelfTest }) => {
+        await runCareerSelfTest()
         app.exit(0)
       })
       return
@@ -206,7 +214,11 @@ if (!SINGLE_INSTANCE_LOCK) {
       getProfileId: () => settings.get().activeProfileId,
       getFacts: (profileId) => {
         try {
-          return contextSqlite.listFacts(profileId).map((f) => f.text)
+          // Only confirmed facts may ground a draft.
+          return contextSqlite
+            .listFacts(profileId)
+            .filter((f) => (f.status ?? 'confirmed') === 'confirmed')
+            .map((f) => f.text)
         } catch {
           return []
         }
@@ -215,6 +227,16 @@ if (!SINGLE_INSTANCE_LOCK) {
         const r = registry.resolveActive()
         return r ? { provider: r.provider, model: r.model } : null
       }
+    })
+
+    const resumeFacts = new ResumeExtractionService({
+      listDocuments: () => contextSqlite.listDocuments(),
+      addFact: (fact) => contextSqlite.addFact(fact),
+      resolveProvider: () => {
+        const r = registry.resolveActive()
+        return r ? { provider: r.provider, model: r.model } : null
+      },
+      getProfileId: () => settings.get().activeProfileId
     })
 
     const modes = new ModesService({
@@ -262,7 +284,11 @@ if (!SINGLE_INSTANCE_LOCK) {
       },
       getProfileFacts: (profileId) => {
         try {
-          return contextSqlite.listFacts(profileId).map((f) => f.text)
+          // Practice is grounded in verified experience only.
+          return contextSqlite
+            .listFacts(profileId)
+            .filter((f) => (f.status ?? 'confirmed') === 'confirmed')
+            .map((f) => f.text)
         } catch {
           return []
         }
@@ -459,6 +485,7 @@ if (!SINGLE_INSTANCE_LOCK) {
       overlay,
       translation,
       stories,
+      resumeFacts,
       getWindow: getMainWindow,
       listMeetings,
       saveMeeting,

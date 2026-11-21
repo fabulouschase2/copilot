@@ -370,7 +370,7 @@ describe('JSON extraction', () => {
 describe('SQLite v4 persistence', () => {
   it('creates the story table and round-trips a story', () => {
     const store = new SQLiteStore(tempDb())
-    expect(SCHEMA_VERSION).toBe(4)
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(4)
     expect(store.listStories('default')).toEqual([])
 
     store.saveStory(story({ storyId: 'p1', title: 'Persisted', skills: ['x'] }))

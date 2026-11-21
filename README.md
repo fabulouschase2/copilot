@@ -9,7 +9,7 @@ storage. Built with Electron 38 + TypeScript + React 19.
 
 | Area | Scope | Status |
 |---|---|---|
-| Stages 1–10 | Original roadmap (research → architecture → providers → transcription → screen → context → modes → persistence → security) | ✅ implemented, 282 tests |
+| Stages 1–10 | Original roadmap (research → architecture → providers → transcription → screen → context → modes → persistence → security) | ✅ implemented, 374 tests |
 | Transformation | Poisely-inspired product rebuild: new design system + shell, Interview / Practice / Meetings / Chat navigation | ✅ implemented |
 | Practice interviews | 7 interview types, difficulty + length, spoken questions (TTS), typed or spoken answers, rubric evaluation per answer, final scorecard with per-dimension scores and improved answers, session history | ✅ implemented |
 | Meetings | Independent before/during/after lifecycle: title + audio source + language + provider display → recording with pause/resume/mute and timestamped, source-attributed transcript → auto-generated summary on end, editable notes, structured action items, save/search/reopen/delete/export, ask questions about saved meetings | ✅ implemented |
@@ -42,7 +42,7 @@ Requirements: Windows 10/11 (primary), Node.js ≥ 20, npm ≥ 10.
 npm install
 npm run dev        # launch the app with hot reload
 npm run build      # production build (out/)
-npm test           # unit tests (vitest, 282 tests)
+npm test           # unit tests (vitest, 374 tests)
 npm run typecheck  # tsc for main + renderer
 npm run dist       # production build + NSIS installer (dist/)
 ```
@@ -165,5 +165,5 @@ src/shared/      IPC contract (zod schemas) — single source of truth
 src/main/        window, IPC, services (chat/STT/modes/practice/context/screen/storage)
 src/preload/     typed contextBridge (bundled for sandbox; no Node in renderer)
 src/renderer/    React UI (interview-first shell: Interview · Practice · Meetings · Chat)
-tests/           vitest unit tests (282 as of 0.2.2)
+tests/           vitest unit tests (374 as of 0.3.1)
 ```

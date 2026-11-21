@@ -12,8 +12,8 @@ Last updated: 2026-11-21 (after Phase 6).
 | Live transcription (cloud STT) | Working pipeline, blocked on user key | Working pipeline | Needs a Groq/OpenAI key; provider 401 surfaces verbatim |
 | Local transcription (whisper.cpp) | Not integrated | **Implemented + verified** — managed server | `docs/local-whisper.md`: 11 s audio → 0.53 s, `/inference` contract |
 | AI interview answers | Working | Working | Phase 3 adds story-bank grounding |
-| Career profile + fact CRUD | Multiple profiles, facts | Working | Per-fact confirmation workflow still open |
-| Résumé import | PDF/TXT/MD | PDF/TXT/MD | DOCX still open |
+| Career profile + fact CRUD | Multiple profiles, facts | **Working with verification** — pending/confirmed/rejected, source quotes, inline edit | Schema v5; `docs/resume-facts.md` |
+| Résumé import | PDF/TXT/MD | **PDF / DOCX / TXT / MD** | DOCX via dependency-free ZIP+XML; scanned PDFs need OCR (not implemented) |
 | Career Story Bank | Missing | **Implemented + verified** — 5 frameworks, ranking, grounded drafts | `docs/career-story-bank.md`; schema v4 |
 | Live translation | Missing | **Implemented + verified** (local model) | `docs/live-translation.md`: EN→ES 3.7 s, live event pipeline |
 | Screen intelligence (question, coding, documents) | Working | Working | Vision provider required |
@@ -38,7 +38,7 @@ Last updated: 2026-11-21 (after Phase 6).
 ## Verification commands
 
 ```powershell
-npm test                 # vitest (300 tests after Phase 6)
+npm test                 # vitest (374 tests after Phase 2 completion)
 npm run typecheck
 npm run build
 $env:COPILOT_SELFTEST='overlay';        .\node_modules\electron\dist\electron.exe .

@@ -52,6 +52,10 @@ export function SetupPanel(props: {
   const [persistence, setPersistence] = useState<import('../../shared/protocol').ContextPersistenceStatus | null>(null)
   const [tests, setTests] = useState<Record<string, { result?: import('../../shared/protocol').ProviderTestResult; busy?: boolean }>>({})
   const [section, setSection] = useState<'profile' | 'providers' | 'data'>('profile')
+  const [factDetails, setFactDetails] = useState<import('../../shared/protocol').ProfileFactDetail[]>([])
+  const [extractingId, setExtractingId] = useState<string | null>(null)
+  const [extractMsg, setExtractMsg] = useState<string | null>(null)
+  const [editingFact, setEditingFact] = useState<{ factId: string; text: string } | null>(null)
 
   const refresh = (): void => {
     void window.copilot.listContextSources().then((res) => {
@@ -59,6 +63,7 @@ export function SetupPanel(props: {
       const jdDoc = res.sources.find((s) => s.sourceId === 'job-description')
       setJd(jdDoc ? jdDoc.preview : '')
     })
+    void window.copilot.listFactDetails().then((res) => setFactDetails(res.facts))
     void window.copilot.listProviders().then(setProviders)
     void window.copilot.listProfiles().then((res) => setProfiles(res.profiles))
     void window.copilot.persistenceStatus().then(setPersistence)
@@ -69,7 +74,34 @@ export function SetupPanel(props: {
   const save = (next: AppSettings): void => onChange(next)
 
   const documents = sources.filter((s) => s.type === 'document')
-  const facts = sources.filter((s) => s.type === 'profile')
+  const factOp = (op: import('../../shared/protocol').ProfileFactOp): void => {
+    void window.copilot.applyProfileOp(op).then(refresh)
+  }
+  const pendingFacts = factDetails.filter((f) => f.status === 'pending')
+  const settledFacts = factDetails.filter((f) => f.status !== 'pending')
+
+  const extractFacts = async (documentId: string): Promise<void> => {
+    setExtractingId(documentId)
+    setExtractMsg(null)
+    try {
+      const res = await window.copilot.extractFacts(documentId)
+      if (res.ok) {
+        setExtractMsg(
+          `${res.added} fact(s) extracted and waiting for review` +
+            (res.rejected.length > 0 ? ` · ${res.rejected.length} rejected as unverified` : '') +
+            (res.providerLabel ? ` · ${res.providerLabel}` : '')
+        )
+      } else {
+        setExtractMsg(
+          (res.message ?? 'Extraction failed.') +
+            (res.rejected.length > 0 ? ` (${res.rejected.length} unverified item(s) rejected)` : '')
+        )
+      }
+      refresh()
+    } finally {
+      setExtractingId(null)
+    }
+  }
   const activeProfile = profiles.find((p) => p.profileId === settings.activeProfileId)
 
   const importDocs = async (): Promise<void> => {
@@ -226,14 +258,75 @@ export function SetupPanel(props: {
                 Add
               </button>
             </div>
-            {facts.map((f) => (
-              <div key={f.sourceId} className="row compact">
+            {pendingFacts.length > 0 && (
+              <div className="notice-box">
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                  Review extracted facts ({pendingFacts.length})
+                </div>
+                <div className="hint" style={{ marginBottom: 6 }}>
+                  These were extracted from your documents. A fact becomes verified experience only
+                  when you confirm it.
+                </div>
+                {pendingFacts.map((f) => (
+                  <div key={f.factId} className="row" style={{ alignItems: 'flex-start' }}>
+                    <span className="badge warn">pending</span>
+                    <div className="grow">
+                      <div>{f.text}</div>
+                      {f.sourceText && <div className="hint">Source: “{f.sourceText}”</div>}
+                    </div>
+                    <button className="chip" onClick={() => factOp({ op: 'confirm', factId: f.factId })}>
+                      Confirm
+                    </button>
+                    <button className="meta-btn" onClick={() => factOp({ op: 'reject', factId: f.factId })}>
+                      Reject
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {settledFacts.map((f) => (
+              <div key={f.factId} className="row compact" style={{ alignItems: 'flex-start' }}>
+                <span className={`badge ${f.status === 'confirmed' ? 'ok' : 'err'}`}>
+                  {f.status === 'confirmed' ? 'verified' : 'rejected'}
+                </span>
                 <span className="badge">{f.category}</span>
-                <span className="grow">{f.preview}</span>
-                <button
-                  className="meta-btn"
-                  onClick={() => void window.copilot.applyProfileOp({ op: 'remove', factId: f.sourceId }).then(refresh)}
-                >
+                <div className="grow">
+                  {editingFact?.factId === f.factId ? (
+                    <div className="row">
+                      <input
+                        className="grow"
+                        type="text"
+                        value={editingFact.text}
+                        onChange={(e) => setEditingFact({ factId: f.factId, text: e.target.value })}
+                      />
+                      <button
+                        className="chip"
+                        onClick={() => {
+                          factOp({ op: 'update', factId: f.factId, text: editingFact.text.trim() })
+                          setEditingFact(null)
+                        }}
+                      >
+                        Save
+                      </button>
+                      <button className="meta-btn" onClick={() => setEditingFact(null)}>
+                        cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <div>{f.text}</div>
+                  )}
+                  {f.sourceText && <div className="hint">Source: “{f.sourceText}”</div>}
+                </div>
+                <button className="meta-btn" onClick={() => setEditingFact({ factId: f.factId, text: f.text })}>
+                  edit
+                </button>
+                {f.status === 'rejected' && (
+                  <button className="meta-btn" onClick={() => factOp({ op: 'confirm', factId: f.factId })}>
+                    restore
+                  </button>
+                )}
+                <button className="meta-btn" onClick={() => factOp({ op: 'remove', factId: f.factId })}>
                   remove
                 </button>
               </div>
@@ -244,7 +337,7 @@ export function SetupPanel(props: {
             <div className="section-title">Résumé & documents</div>
             <div className="row">
               <button className="primary" onClick={() => void importDocs().then(refresh)}>
-                Import PDF / TXT / MD…
+                Import PDF / DOCX / TXT / MD…
               </button>
             </div>
             {importErrors.map((e, i) => (
@@ -256,11 +349,20 @@ export function SetupPanel(props: {
               <div key={d.sourceId} className="row compact">
                 <span className={`badge ${d.extractionStatus === 'ready' ? 'ok' : 'err'}`}>{d.extractionStatus}</span>
                 <span className="grow">{d.displayName}</span>
+                <button
+                  className="chip"
+                  disabled={extractingId === d.sourceId}
+                  title="Extract facts from this document for review"
+                  onClick={() => void extractFacts(d.sourceId)}
+                >
+                  {extractingId === d.sourceId ? 'Extracting…' : 'Extract facts'}
+                </button>
                 <button className="meta-btn" onClick={() => void window.copilot.removeDocument(d.sourceId).then(refresh)}>
                   remove
                 </button>
               </div>
             ))}
+            {extractMsg && <div className="hint" style={{ marginTop: 6 }}>{extractMsg}</div>}
           </div>
 
           <div className="card">

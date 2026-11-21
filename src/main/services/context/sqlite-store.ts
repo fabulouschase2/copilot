@@ -14,7 +14,7 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { ProfileCategory } from '../../../shared/protocol'
 
-export const SCHEMA_VERSION = 4
+export const SCHEMA_VERSION = 5
 
 export interface DocumentRecord {
   sourceId: string
@@ -30,6 +30,11 @@ export interface ProfileFactRecord {
   text: string
   category: ProfileCategory
   origin: 'user' | 'model'
+  /** Only 'confirmed' facts are treated as verified experience. */
+  status?: 'pending' | 'confirmed' | 'rejected'
+  /** Verbatim supporting phrase from the source document. */
+  sourceText?: string | null
+  sourceDocumentId?: string | null
   createdAt: string
   updatedAt: string
   profileId: string
@@ -69,6 +74,81 @@ export interface MeetingActionItemRecord {
 }
 
 const CATEGORIES = new Set(['background', 'skill', 'preference', 'project', 'other'])
+
+/**
+ * Tables added in v3/v4. Created unconditionally with IF NOT EXISTS so a
+ * database whose version marker is ahead of its actual tables (a partial
+ * restore, a hand-edited file) still starts instead of failing on the first
+ * query. Version numbers decide which *alterations* run, not whether the
+ * schema exists.
+ */
+const V2_TABLES_SQL = `
+  CREATE TABLE IF NOT EXISTS meetings (
+    meeting_id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    transcript TEXT NOT NULL DEFAULT '',
+    notes TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    source TEXT,
+    language TEXT,
+    provider_label TEXT,
+    started_at TEXT,
+    ended_at TEXT,
+    duration_ms INTEGER,
+    action_items TEXT NOT NULL DEFAULT '[]'
+  );
+`
+
+const V3_TABLES_SQL = `
+  CREATE TABLE IF NOT EXISTS profiles (
+    profile_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS practice_sessions (
+    practice_id TEXT PRIMARY KEY,
+    type TEXT NOT NULL,
+    difficulty TEXT NOT NULL,
+    question_count INTEGER NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('active','completed','cancelled')),
+    role TEXT NOT NULL DEFAULT '',
+    job_description TEXT NOT NULL DEFAULT '',
+    scorecard_json TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS practice_turns (
+    practice_id TEXT NOT NULL REFERENCES practice_sessions(practice_id) ON DELETE CASCADE,
+    idx INTEGER NOT NULL,
+    question TEXT NOT NULL,
+    answer TEXT NOT NULL DEFAULT '',
+    feedback_json TEXT,
+    spoken INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (practice_id, idx)
+  );
+`
+
+const V4_TABLES_SQL = `
+  CREATE TABLE IF NOT EXISTS career_stories (
+    story_id TEXT PRIMARY KEY,
+    profile_id TEXT NOT NULL DEFAULT 'default',
+    title TEXT NOT NULL,
+    framework TEXT NOT NULL CHECK(framework IN ('star','car','par','soar','answer-first')),
+    situation TEXT NOT NULL DEFAULT '',
+    task TEXT NOT NULL DEFAULT '',
+    action TEXT NOT NULL DEFAULT '',
+    result TEXT NOT NULL DEFAULT '',
+    answer_first TEXT NOT NULL DEFAULT '',
+    skills_json TEXT NOT NULL DEFAULT '[]',
+    role TEXT NOT NULL DEFAULT '',
+    origin TEXT NOT NULL CHECK(origin IN ('user','model')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_career_stories_profile ON career_stories(profile_id);
+`
 
 export const DEFAULT_PROFILE_ID = 'default'
 export const DEFAULT_PROFILE_NAME = 'Default'
@@ -160,53 +240,20 @@ export class SQLiteStore {
     if (current > SCHEMA_VERSION) {
       throw new Error(`Database schema version ${current} is newer than this app supports (${SCHEMA_VERSION})`)
     }
+    // Ensure every table this build queries exists, regardless of the marker.
+    this.db.exec(V2_TABLES_SQL)
+    this.db.exec(V3_TABLES_SQL)
+    this.db.exec(V4_TABLES_SQL)
     // v1 → v2: meetings table (user-approved saved meeting records).
     if (current < 2) {
-      this.db.exec(`
-        CREATE TABLE IF NOT EXISTS meetings (
-          meeting_id TEXT PRIMARY KEY,
-          title TEXT NOT NULL,
-          transcript TEXT NOT NULL DEFAULT '',
-          notes TEXT NOT NULL DEFAULT '',
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL
-        );
-      `)
+      // (Table is ensured above.)
       this.db
         .prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
         .run('schema_version', '2')
     }
     // v2 → v3: profiles, per-profile facts, meeting metadata, practice sessions.
     if (current < 3) {
-      this.db.exec(`
-        CREATE TABLE IF NOT EXISTS profiles (
-          profile_id TEXT PRIMARY KEY,
-          name TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS practice_sessions (
-          practice_id TEXT PRIMARY KEY,
-          type TEXT NOT NULL,
-          difficulty TEXT NOT NULL,
-          question_count INTEGER NOT NULL,
-          status TEXT NOT NULL CHECK(status IN ('active','completed','cancelled')),
-          role TEXT NOT NULL DEFAULT '',
-          job_description TEXT NOT NULL DEFAULT '',
-          scorecard_json TEXT,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS practice_turns (
-          practice_id TEXT NOT NULL REFERENCES practice_sessions(practice_id) ON DELETE CASCADE,
-          idx INTEGER NOT NULL,
-          question TEXT NOT NULL,
-          answer TEXT NOT NULL DEFAULT '',
-          feedback_json TEXT,
-          spoken INTEGER NOT NULL DEFAULT 0,
-          PRIMARY KEY (practice_id, idx)
-        );
-      `)
+      // (Tables are ensured above; this block only adds columns and defaults.)
       // Additive columns on existing tables (idempotent via column checks).
       const meetingCols = this.columns('meetings')
       if (!meetingCols.has('source')) this.db.exec("ALTER TABLE meetings ADD COLUMN source TEXT")
@@ -231,30 +278,28 @@ export class SQLiteStore {
         .prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
         .run('schema_version', '3')
     }
-    // v3 → v4: career story bank (Phase 2). Additive table; existing data untouched.
+    // v3 → v4: career story bank (Phase 2). Additive table (ensured above).
     if (current < 4) {
-      this.db.exec(`
-        CREATE TABLE IF NOT EXISTS career_stories (
-          story_id TEXT PRIMARY KEY,
-          profile_id TEXT NOT NULL DEFAULT '${DEFAULT_PROFILE_ID}',
-          title TEXT NOT NULL,
-          framework TEXT NOT NULL CHECK(framework IN ('star','car','par','soar','answer-first')),
-          situation TEXT NOT NULL DEFAULT '',
-          task TEXT NOT NULL DEFAULT '',
-          action TEXT NOT NULL DEFAULT '',
-          result TEXT NOT NULL DEFAULT '',
-          answer_first TEXT NOT NULL DEFAULT '',
-          skills_json TEXT NOT NULL DEFAULT '[]',
-          role TEXT NOT NULL DEFAULT '',
-          origin TEXT NOT NULL CHECK(origin IN ('user','model')),
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_career_stories_profile ON career_stories(profile_id);
-      `)
       this.db
         .prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
         .run('schema_version', '4')
+    }
+    // v4 → v5: fact provenance and review status (Phase 2 completion).
+    // Existing facts were written by the user, so they default to 'confirmed'.
+    if (current < 5) {
+      const factCols = this.columns('profile_facts')
+      if (!factCols.has('status')) {
+        this.db.exec("ALTER TABLE profile_facts ADD COLUMN status TEXT NOT NULL DEFAULT 'confirmed'")
+      }
+      if (!factCols.has('source_text')) {
+        this.db.exec('ALTER TABLE profile_facts ADD COLUMN source_text TEXT')
+      }
+      if (!factCols.has('source_document_id')) {
+        this.db.exec('ALTER TABLE profile_facts ADD COLUMN source_document_id TEXT')
+      }
+      this.db
+        .prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+        .run('schema_version', '5')
     }
   }
 
@@ -313,8 +358,8 @@ export class SQLiteStore {
       getDoc: p('SELECT source_id, display_name, text, status, created_at, updated_at FROM documents WHERE source_id = ?'),
       delDoc: p('DELETE FROM documents WHERE source_id = ?'),
       delDocExcl: p("DELETE FROM exclusions WHERE kind = 'source' AND key = ?"),
-      insFact: p('INSERT OR REPLACE INTO profile_facts (fact_id, text, category, origin, created_at, updated_at, profile_id) VALUES (?, ?, ?, ?, ?, ?, ?)'),
-      allFacts: p('SELECT fact_id, text, category, origin, created_at, updated_at, profile_id FROM profile_facts ORDER BY created_at'),
+      insFact: p('INSERT OR REPLACE INTO profile_facts (fact_id, text, category, origin, created_at, updated_at, profile_id, status, source_text, source_document_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'),
+      allFacts: p('SELECT fact_id, text, category, origin, created_at, updated_at, profile_id, status, source_text, source_document_id FROM profile_facts ORDER BY created_at'),
       getFact: p('SELECT fact_id FROM profile_facts WHERE fact_id = ?'),
       updFact: p('UPDATE profile_facts SET text = COALESCE(?, text), category = COALESCE(?, category), updated_at = ? WHERE fact_id = ?'),
       delFact: p('DELETE FROM profile_facts WHERE fact_id = ?'),
@@ -423,7 +468,27 @@ export class SQLiteStore {
     if (!CATEGORIES.has(fact.category)) {
       throw new Error(`Invalid profile category: ${String(fact.category)}`)
     }
-    this.stmts.insFact.run(fact.factId, fact.text, fact.category, fact.origin, fact.createdAt, fact.updatedAt, fact.profileId)
+    const status = fact.status === 'pending' || fact.status === 'rejected' ? fact.status : 'confirmed'
+    this.stmts.insFact.run(
+      fact.factId,
+      fact.text,
+      fact.category,
+      fact.origin,
+      fact.createdAt,
+      fact.updatedAt,
+      fact.profileId,
+      status,
+      fact.sourceText ?? null,
+      fact.sourceDocumentId ?? null
+    )
+  }
+
+  /** Move a fact through the confirmation lifecycle. */
+  setFactStatus(factId: string, status: 'pending' | 'confirmed' | 'rejected', updatedAt: string): boolean {
+    const result = this.db
+      .prepare('UPDATE profile_facts SET status = ?, updated_at = ? WHERE fact_id = ?')
+      .run(status, updatedAt, factId)
+    return Number(result.changes ?? 0) > 0
   }
 
   updateFact(factId: string, patch: { text?: string; category?: ProfileCategory }): boolean {
@@ -648,11 +713,18 @@ function rowToDocument(row: Record<string, unknown>): DocumentRecord {
 }
 
 function rowToFact(row: Record<string, unknown>): ProfileFactRecord {
+  const rawStatus = String(row.status ?? 'confirmed')
   return {
     factId: String(row.fact_id),
     text: String(row.text),
     category: String(row.category) as ProfileCategory,
     origin: row.origin === 'model' ? 'model' : 'user',
+    status: rawStatus === 'pending' || rawStatus === 'rejected' ? rawStatus : 'confirmed',
+    sourceText: row.source_text === null || row.source_text === undefined ? null : String(row.source_text),
+    sourceDocumentId:
+      row.source_document_id === null || row.source_document_id === undefined
+        ? null
+        : String(row.source_document_id),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
     profileId: row.profile_id === undefined ? DEFAULT_PROFILE_ID : String(row.profile_id)
