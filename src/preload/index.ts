@@ -25,6 +25,13 @@ import {
   OverlaySetRequestSchema,
   ProviderRoutesRequestSchema,
   ScreenTranslateRequestSchema,
+  ConversationSearchRequestSchema,
+  ConversationCreateRequestSchema,
+  ConversationIdRequestSchema,
+  ConversationAppendRequestSchema,
+  ConversationRenameRequestSchema,
+  ConversationArchiveRequestSchema,
+  ConversationPinRequestSchema,
   StoryDraftRequestSchema,
   StoryIdRequestSchema,
   StoryUpsertRequestSchema,
@@ -249,7 +256,25 @@ const api: CopilotApi = {
       cb(payload)
     ipcRenderer.on(IPC.chatError, listener)
     return () => ipcRenderer.removeListener(IPC.chatError, listener)
-  }
+  },
+
+  /* persistent conversations (0.5.0) */
+  listConversations: (req?: { query?: string; includeArchived?: boolean }) =>
+    ipcRenderer.invoke(IPC.conversationsList, ConversationSearchRequestSchema.parse(req ?? {})),
+  createConversation: (req?: { title?: string }) =>
+    ipcRenderer.invoke(IPC.conversationsCreate, ConversationCreateRequestSchema.parse(req ?? {})),
+  getConversation: (conversationId: string) =>
+    ipcRenderer.invoke(IPC.conversationsGet, ConversationIdRequestSchema.parse({ conversationId })),
+  appendConversationMessage: (req: z.infer<typeof ConversationAppendRequestSchema>) =>
+    ipcRenderer.invoke(IPC.conversationsAppend, ConversationAppendRequestSchema.parse(req)),
+  renameConversation: (req: z.infer<typeof ConversationRenameRequestSchema>) =>
+    ipcRenderer.invoke(IPC.conversationsRename, ConversationRenameRequestSchema.parse(req)),
+  deleteConversation: (conversationId: string) =>
+    ipcRenderer.invoke(IPC.conversationsDelete, ConversationIdRequestSchema.parse({ conversationId })),
+  archiveConversation: (req: z.infer<typeof ConversationArchiveRequestSchema>) =>
+    ipcRenderer.invoke(IPC.conversationsArchive, ConversationArchiveRequestSchema.parse(req)),
+  pinConversation: (req: z.infer<typeof ConversationPinRequestSchema>) =>
+    ipcRenderer.invoke(IPC.conversationsPin, ConversationPinRequestSchema.parse(req))
 }
 
 contextBridge.exposeInMainWorld('copilot', api)

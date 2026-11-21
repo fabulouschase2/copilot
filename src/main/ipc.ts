@@ -57,8 +57,9 @@ import type { TranslationService } from './services/translation/translation-serv
 import type { StoryBankService } from './services/stories/story-service'
 import type { ResumeExtractionService } from './services/career/resume-facts'
 import type { ScreenTranslationService } from './services/screen/screen-translation'
+import type { ConversationService } from './services/conversations/conversation-service'
 import type { OverlayController } from './overlay-window'
-import { OverlayContentSchema, OverlaySetRequestSchema, WhisperConfigureRequestSchema, StoryDraftRequestSchema, StoryIdRequestSchema, StoryUpsertRequestSchema, DocumentIdRequestSchema, ProviderRoutesRequestSchema, ScreenTranslateRequestSchema } from '../shared/protocol'
+import { OverlayContentSchema, OverlaySetRequestSchema, WhisperConfigureRequestSchema, StoryDraftRequestSchema, StoryIdRequestSchema, StoryUpsertRequestSchema, DocumentIdRequestSchema, ProviderRoutesRequestSchema, ScreenTranslateRequestSchema, ConversationSearchRequestSchema, ConversationCreateRequestSchema, ConversationIdRequestSchema, ConversationAppendRequestSchema, ConversationRenameRequestSchema, ConversationArchiveRequestSchema, ConversationPinRequestSchema } from '../shared/protocol'
 
 export interface IpcDeps {
   settings: SettingsStore
@@ -69,6 +70,7 @@ export interface IpcDeps {
   transcript: TranscriptService
   screen: ScreenService
   screenTranslation: ScreenTranslationService
+  conversations: ConversationService
   context: ContextService
   modes: ModesService
   practice: PracticeService
@@ -544,6 +546,56 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 
   ipcMain.handle(IPC.screenTranslateHistory, () => ({ entries: deps.screenTranslation.list() }))
   ipcMain.on(IPC.screenTranslateClear, () => deps.screenTranslation.clear())
+
+  /* ── Persistent conversations (0.5.0) ──────────────────────────────── */
+
+  ipcMain.handle(IPC.conversationsList, (_e, raw: unknown) => {
+    const parsed = ConversationSearchRequestSchema.safeParse(raw ?? {})
+    if (!parsed.success) return { conversations: [] }
+    return { conversations: deps.conversations.list(parsed.data.query, parsed.data.includeArchived) }
+  })
+
+  ipcMain.handle(IPC.conversationsCreate, (_e, raw: unknown) => {
+    const parsed = ConversationCreateRequestSchema.safeParse(raw ?? {})
+    if (!parsed.success) return { ok: false, message: 'Invalid conversation request' }
+    return { ok: true, conversation: deps.conversations.create(parsed.data.title) }
+  })
+
+  ipcMain.handle(IPC.conversationsGet, (_e, raw: unknown) => {
+    const parsed = ConversationIdRequestSchema.safeParse(raw)
+    if (!parsed.success) return undefined
+    return deps.conversations.get(parsed.data.conversationId) ?? undefined
+  })
+
+  ipcMain.handle(IPC.conversationsAppend, (_e, raw: unknown) => {
+    const parsed = ConversationAppendRequestSchema.safeParse(raw)
+    if (!parsed.success) return { ok: false, message: 'Invalid message' }
+    return deps.conversations.append(parsed.data)
+  })
+
+  ipcMain.handle(IPC.conversationsRename, (_e, raw: unknown) => {
+    const parsed = ConversationRenameRequestSchema.safeParse(raw)
+    if (!parsed.success) return { ok: false }
+    return { ok: deps.conversations.rename(parsed.data.conversationId, parsed.data.title) }
+  })
+
+  ipcMain.handle(IPC.conversationsDelete, (_e, raw: unknown) => {
+    const parsed = ConversationIdRequestSchema.safeParse(raw)
+    if (!parsed.success) return { ok: false }
+    return { ok: deps.conversations.remove(parsed.data.conversationId) }
+  })
+
+  ipcMain.handle(IPC.conversationsArchive, (_e, raw: unknown) => {
+    const parsed = ConversationArchiveRequestSchema.safeParse(raw)
+    if (!parsed.success) return { ok: false }
+    return { ok: deps.conversations.setArchived(parsed.data.conversationId, parsed.data.archived) }
+  })
+
+  ipcMain.handle(IPC.conversationsPin, (_e, raw: unknown) => {
+    const parsed = ConversationPinRequestSchema.safeParse(raw)
+    if (!parsed.success) return { ok: false }
+    return { ok: deps.conversations.setPinned(parsed.data.conversationId, parsed.data.pinned) }
+  })
 
   // Controller events are forwarded to whatever window is current at event
   // time; controller holds this object from construction.

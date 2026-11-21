@@ -293,6 +293,21 @@ retries transient 429/503 with a fallback across candidates; the working model i
 
 Evidence: `docs/providers.md`.
 
+## 0.5.0 phase 2 — persistent conversations (delivered)
+
+- Schema **v6**: `conversations` + `conversation_messages` (additive, FK cascade), ensured
+  idempotently so a v5 database upgrades in place.
+- `ConversationService`: create, list (search over title **and** message bodies), get, append,
+  rename, archive, pin, delete — all profile-scoped.
+- Titles derive from the first user message (no extra inference, so saving never depends on a
+  provider). Assistant messages are stored only when generation completed.
+- Chat UI: history drawer with search, archive filter, pin, rename, two-step delete, “continue”
+  by opening a past conversation, relative timestamps, and a New-chat action.
+- 13 tests incl. real SQLite round-trip, restart persistence, profile isolation and v5→v6 upgrade.
+
+Full suite: **415 / 415 passed** (47 files); typecheck and build clean; UI smoke test renders all
+views with zero console errors. Evidence: `docs/conversations.md`.
+
 ## Remaining phases
 
 Tracked in `FEATURE_STATUS.md`. Cloud sync, billing and the phone companion require

@@ -14,7 +14,7 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { ProfileCategory } from '../../../shared/protocol'
 
-export const SCHEMA_VERSION = 5
+export const SCHEMA_VERSION = 6
 
 export interface DocumentRecord {
   sourceId: string
@@ -130,6 +130,31 @@ const V3_TABLES_SQL = `
   );
 `
 
+export interface ConversationRecord {
+  conversationId: string
+  profileId: string
+  title: string
+  archived: boolean
+  pinned: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ConversationMessageRecord {
+  messageId: string
+  conversationId: string
+  role: 'user' | 'assistant'
+  content: string
+  providerLabel: string | null
+  model: string | null
+  createdAt: string
+}
+
+export interface ConversationListRow extends ConversationRecord {
+  messageCount: number
+  preview: string
+}
+
 const V4_TABLES_SQL = `
   CREATE TABLE IF NOT EXISTS career_stories (
     story_id TEXT PRIMARY KEY,
@@ -148,6 +173,29 @@ const V4_TABLES_SQL = `
     updated_at TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_career_stories_profile ON career_stories(profile_id);
+`
+
+const V6_TABLES_SQL = `
+  CREATE TABLE IF NOT EXISTS conversations (
+    conversation_id TEXT PRIMARY KEY,
+    profile_id TEXT NOT NULL DEFAULT 'default',
+    title TEXT NOT NULL,
+    archived INTEGER NOT NULL DEFAULT 0,
+    pinned INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS conversation_messages (
+    message_id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversations(conversation_id) ON DELETE CASCADE,
+    role TEXT NOT NULL CHECK(role IN ('user','assistant')),
+    content TEXT NOT NULL,
+    provider_label TEXT,
+    model TEXT,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_conversations_profile ON conversations(profile_id);
+  CREATE INDEX IF NOT EXISTS idx_messages_conversation ON conversation_messages(conversation_id, created_at);
 `
 
 export const DEFAULT_PROFILE_ID = 'default'
@@ -244,6 +292,7 @@ export class SQLiteStore {
     this.db.exec(V2_TABLES_SQL)
     this.db.exec(V3_TABLES_SQL)
     this.db.exec(V4_TABLES_SQL)
+    this.db.exec(V6_TABLES_SQL)
     // v1 → v2: meetings table (user-approved saved meeting records).
     if (current < 2) {
       // (Table is ensured above.)
@@ -300,6 +349,12 @@ export class SQLiteStore {
       this.db
         .prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
         .run('schema_version', '5')
+    }
+    // v5 → v6: persistent conversations (0.5.0). Tables ensured above.
+    if (current < 6) {
+      this.db
+        .prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+        .run('schema_version', '6')
     }
   }
 
@@ -461,6 +516,102 @@ export class SQLiteStore {
 
   deleteStory(storyId: string): boolean {
     const result = this.db.prepare('DELETE FROM career_stories WHERE story_id = ?').run(storyId)
+    return Number(result.changes ?? 0) > 0
+  }
+
+  /* ── Persistent conversations (0.5.0) ────────────────────────────────── */
+
+  createConversation(c: ConversationRecord): void {
+    this.db
+      .prepare(
+        'INSERT INTO conversations (conversation_id, profile_id, title, archived, pinned, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      )
+      .run(
+        c.conversationId,
+        c.profileId,
+        c.title,
+        c.archived ? 1 : 0,
+        c.pinned ? 1 : 0,
+        c.createdAt,
+        c.updatedAt
+      )
+  }
+
+  /**
+   * Conversations for one profile. Search matches the title or any message body
+   * so “that thing I asked last week” is findable. Pinned first, then recency.
+   */
+  listConversations(profileId: string, query = '', includeArchived = false): ConversationListRow[] {
+    const like = `%${query.trim().replace(/[%_]/g, (m) => `\${m}`)}%`
+    const sql = `
+      SELECT c.*,
+             (SELECT COUNT(*) FROM conversation_messages m WHERE m.conversation_id = c.conversation_id) AS message_count,
+             COALESCE((SELECT m2.content FROM conversation_messages m2 WHERE m2.conversation_id = c.conversation_id ORDER BY m2.created_at DESC LIMIT 1), '') AS preview
+      FROM conversations c
+      WHERE c.profile_id = ?
+        AND (? = 1 OR c.archived = 0)
+        AND (
+          ? = '%%'
+          OR c.title LIKE ? ESCAPE '\\'
+          OR EXISTS (SELECT 1 FROM conversation_messages m3 WHERE m3.conversation_id = c.conversation_id AND m3.content LIKE ? ESCAPE '\\')
+        )
+      ORDER BY c.pinned DESC, c.updated_at DESC
+      LIMIT 200
+    `
+    const rows = this.db
+      .prepare(sql)
+      .all(profileId, includeArchived ? 1 : 0, like, like, like) as Array<Record<string, unknown>>
+    return rows.map(rowToConversation)
+  }
+
+  getConversation(conversationId: string): ConversationRecord | null {
+    const row = this.db
+      .prepare('SELECT * FROM conversations WHERE conversation_id = ?')
+      .get(conversationId) as Record<string, unknown> | undefined
+    return row ? rowToConversationBase(row) : null
+  }
+
+  listConversationMessages(conversationId: string): ConversationMessageRecord[] {
+    const rows = this.db
+      .prepare('SELECT * FROM conversation_messages WHERE conversation_id = ? ORDER BY created_at ASC, rowid ASC')
+      .all(conversationId) as Array<Record<string, unknown>>
+    return rows.map(rowToConversationMessage)
+  }
+
+  appendConversationMessage(m: ConversationMessageRecord): void {
+    this.db
+      .prepare(
+        'INSERT INTO conversation_messages (message_id, conversation_id, role, content, provider_label, model, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      )
+      .run(m.messageId, m.conversationId, m.role, m.content, m.providerLabel, m.model, m.createdAt)
+    this.db
+      .prepare('UPDATE conversations SET updated_at = ? WHERE conversation_id = ?')
+      .run(m.createdAt, m.conversationId)
+  }
+
+  renameConversation(conversationId: string, title: string, updatedAt: string): boolean {
+    const result = this.db
+      .prepare('UPDATE conversations SET title = ?, updated_at = ? WHERE conversation_id = ?')
+      .run(title, updatedAt, conversationId)
+    return Number(result.changes ?? 0) > 0
+  }
+
+  setConversationArchived(conversationId: string, archived: boolean, updatedAt: string): boolean {
+    const result = this.db
+      .prepare('UPDATE conversations SET archived = ?, updated_at = ? WHERE conversation_id = ?')
+      .run(archived ? 1 : 0, updatedAt, conversationId)
+    return Number(result.changes ?? 0) > 0
+  }
+
+  setConversationPinned(conversationId: string, pinned: boolean, updatedAt: string): boolean {
+    const result = this.db
+      .prepare('UPDATE conversations SET pinned = ?, updated_at = ? WHERE conversation_id = ?')
+      .run(pinned ? 1 : 0, updatedAt, conversationId)
+    return Number(result.changes ?? 0) > 0
+  }
+
+  deleteConversation(conversationId: string): boolean {
+    const result = this.db.prepare('DELETE FROM conversations WHERE conversation_id = ?').run(conversationId)
     return Number(result.changes ?? 0) > 0
   }
 
@@ -818,5 +969,39 @@ function rowToStory(row: Record<string, unknown>): StoryRecord {
     origin: row.origin === 'model' ? 'model' : 'user',
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at)
+  }
+}
+
+function rowToConversationBase(row: Record<string, unknown>): ConversationRecord {
+  return {
+    conversationId: String(row.conversation_id),
+    profileId: String(row.profile_id ?? DEFAULT_PROFILE_ID),
+    title: String(row.title ?? 'Untitled'),
+    archived: Number(row.archived ?? 0) === 1,
+    pinned: Number(row.pinned ?? 0) === 1,
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  }
+}
+
+function rowToConversation(row: Record<string, unknown>): ConversationListRow {
+  const base = rowToConversationBase(row)
+  const preview = String(row.preview ?? '').replace(/\s+/g, ' ').trim()
+  return {
+    ...base,
+    messageCount: Number(row.message_count ?? 0),
+    preview: preview.slice(0, 160)
+  }
+}
+
+function rowToConversationMessage(row: Record<string, unknown>): ConversationMessageRecord {
+  return {
+    messageId: String(row.message_id),
+    conversationId: String(row.conversation_id),
+    role: row.role === 'assistant' ? 'assistant' : 'user',
+    content: String(row.content ?? ''),
+    providerLabel: row.provider_label === null || row.provider_label === undefined ? null : String(row.provider_label),
+    model: row.model === null || row.model === undefined ? null : String(row.model),
+    createdAt: String(row.created_at)
   }
 }

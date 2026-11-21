@@ -23,11 +23,11 @@ Last updated: 2026-11-21 (after Phase 6).
 | Capture exclusion | Deliberately excluded | **Implemented + verified** (overlay only) | 8.21% → 0% magenta share |
 | Meeting intelligence | Working (summary, actions, search, export) | Working | Transcripts isolated per session |
 | Practice interviews | Working (7 types, scorecards) | Working | `docs/transformation-report.md` |
-| AI chat with context | Working | Working | Profile/story/meeting context selectable |
+| Gemini | Provider wired, never live-tested | **Live verified** — text + vision | `docs/providers.md`: 65 models, 590 ms text, vision read the screenshot |
 | Phone companion | Missing | **Blocked** | Needs a mobile client + pairing backend; no toolchain here. Desktop-side pairing contract is documented, not faked. |
 | Accounts / cloud sync | Missing | **Blocked** | Needs a server and credentials; local-first behaviour is unchanged |
 | Voice assistant (push-to-talk) | Missing | **Not implemented** | Planned: reuses local Whisper + TTS; needs a dedicated session purpose and panel |
-| Conversation persistence | Missing | **Not implemented** | Chat is session-only today; needs schema v6 (conversations/messages) and history UI |
+| Conversation persistence | Missing | **Implemented + tested** | Schema v6; `docs/conversations.md`; search, pin, archive, continue |
 | Subscriptions / payments | Missing | **Blocked** | No payment provider configured; never simulated |
 | Usage dashboard | Missing | Partial — local token/latency figures exist per answer | No billing backend to aggregate against |
 | Windows packaging | NSIS installer verified at 0.2.1 | **Rebuilt and verified** — `dist/Copilot-Setup-0.3.0.exe`; capture exclusion re-tested in the packaged app | Unsigned (no certificate) |

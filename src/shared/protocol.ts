@@ -59,6 +59,14 @@ export const IPC = {
   contextClearSession: 'context:clear-session',
   contextRemoveDocument: 'context:remove-document',
   chatContext: 'chat:context',
+  conversationsList: 'conversations:list',
+  conversationsCreate: 'conversations:create',
+  conversationsGet: 'conversations:get',
+  conversationsAppend: 'conversations:append',
+  conversationsRename: 'conversations:rename',
+  conversationsDelete: 'conversations:delete',
+  conversationsArchive: 'conversations:archive',
+  conversationsPin: 'conversations:pin',
   contextPersistenceStatus: 'context:persistence-status',
   contextBackup: 'context:backup',
   contextRestore: 'context:restore',
@@ -1109,6 +1117,68 @@ export interface ScreenTranslationInfo {
   partial?: boolean
 }
 
+/* ─── Persistent conversations (0.5.0) ───────────────────────────────── */
+
+export interface ConversationSummary {
+  conversationId: string
+  title: string
+  createdAt: string
+  updatedAt: string
+  messageCount: number
+  archived: boolean
+  pinned: boolean
+  preview: string
+}
+
+export interface ConversationMessageInfo {
+  messageId: string
+  role: 'user' | 'assistant'
+  content: string
+  createdAt: string
+  providerLabel?: string
+  model?: string
+}
+
+export interface ConversationDetail extends ConversationSummary {
+  messages: ConversationMessageInfo[]
+}
+
+export const ConversationCreateRequestSchema = z.object({
+  title: z.string().max(120).optional()
+})
+
+export const ConversationIdRequestSchema = z.object({
+  conversationId: z.string().min(1).max(64)
+})
+
+export const ConversationAppendRequestSchema = z.object({
+  conversationId: z.string().min(1).max(64),
+  role: z.enum(['user', 'assistant']),
+  content: z.string().min(1).max(200_000),
+  providerLabel: z.string().max(80).optional(),
+  model: z.string().max(128).optional()
+})
+
+export const ConversationRenameRequestSchema = z.object({
+  conversationId: z.string().min(1).max(64),
+  title: z.string().min(1).max(120)
+})
+
+export const ConversationArchiveRequestSchema = z.object({
+  conversationId: z.string().min(1).max(64),
+  archived: z.boolean()
+})
+
+export const ConversationPinRequestSchema = z.object({
+  conversationId: z.string().min(1).max(64),
+  pinned: z.boolean()
+})
+
+export const ConversationSearchRequestSchema = z.object({
+  query: z.string().max(200).default(''),
+  includeArchived: z.boolean().default(false)
+})
+
 export const AppSettingsSchema = z.object({
   providers: z.array(ProviderConfigSchema).max(20).default([]),
   activeProviderId: z.string().min(1).max(64).nullable().default(null),
@@ -1427,6 +1497,15 @@ export interface CopilotApi {
   }>
   clearSessionContext(): void
   onChatContext(cb: (e: z.infer<typeof ChatContextUsedEventSchema>) => void): () => void
+  /* persistent conversations */
+  listConversations(req?: { query?: string; includeArchived?: boolean }): Promise<{ conversations: ConversationSummary[] }>
+  createConversation(req?: { title?: string }): Promise<{ ok: boolean; conversation?: ConversationSummary; message?: string }>
+  getConversation(conversationId: string): Promise<ConversationDetail | undefined>
+  appendConversationMessage(req: z.infer<typeof ConversationAppendRequestSchema>): Promise<{ ok: boolean; messageId?: string }>
+  renameConversation(req: z.infer<typeof ConversationRenameRequestSchema>): Promise<{ ok: boolean }>
+  deleteConversation(conversationId: string): Promise<{ ok: boolean }>
+  archiveConversation(req: z.infer<typeof ConversationArchiveRequestSchema>): Promise<{ ok: boolean }>
+  pinConversation(req: z.infer<typeof ConversationPinRequestSchema>): Promise<{ ok: boolean }>
   persistenceStatus(): Promise<ContextPersistenceStatus>
   backupNow(): Promise<{ ok: boolean; message?: string }>
   restoreBackup(): Promise<{ ok: boolean; message?: string }>

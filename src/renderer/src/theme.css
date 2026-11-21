@@ -761,3 +761,44 @@ input[type='checkbox'] { accent-color: var(--accent); }
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
+
+/* ── Conversation history (0.5.0) ───────────────────────────────────── */
+.conv-list {
+  max-height: 34vh;
+  overflow-y: auto;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.conv-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 6px;
+  background: var(--bg-elev);
+}
+.conv-item:hover { border-color: var(--border-strong); }
+.conv-open {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  background: transparent;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  padding: 0;
+  color: var(--text);
+}
+.conv-title { font-size: var(--fs); font-weight: 600; }
+.conv-preview {
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.meta-btn.danger { color: var(--error); }

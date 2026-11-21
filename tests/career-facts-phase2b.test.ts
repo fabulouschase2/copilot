@@ -319,7 +319,7 @@ describe('schema v5 fact lifecycle', () => {
   it('round-trips status, source text and document link', () => {
     const dir = tempDir()
     const store = new SQLiteStore(path.join(dir, 'context.db'))
-    expect(SCHEMA_VERSION).toBe(5)
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(5)
     store.addFact({
       factId: 'f1',
       text: 'Led a team of four engineers',

@@ -16,6 +16,7 @@ import { ScreenService } from './services/screen/screen-service'
 import { ElectronScreenBackend, cropImage, cropRect } from './services/screen/screen-backend'
 import { ScreenTranslationService } from './services/screen/screen-translation'
 import { ocrImageFile } from './services/screen/local-ocr'
+import { ConversationService } from './services/conversations/conversation-service'
 import { ContextService } from './services/context/context-service'
 import { SQLiteStore } from './services/context/sqlite-store'
 import { migrateLegacyJson } from './services/context/migration'
@@ -213,6 +214,24 @@ if (!SINGLE_INSTANCE_LOCK) {
         const win = getMainWindow()
         if (win && !win.isDestroyed()) win.webContents.send('overlay:state', state)
       }
+    })
+
+    // 0.5.0: persistent conversations. Store closures respect the active
+    // database (a restore swaps contextSqlite).
+    const conversations = new ConversationService({
+      store: {
+        createConversation: (c) => contextSqlite.createConversation(c),
+        listConversations: (profileId, query, includeArchived) =>
+          contextSqlite.listConversations(profileId, query, includeArchived),
+        getConversation: (id) => contextSqlite.getConversation(id),
+        listConversationMessages: (id) => contextSqlite.listConversationMessages(id),
+        appendConversationMessage: (m) => contextSqlite.appendConversationMessage(m),
+        renameConversation: (id, title, at) => contextSqlite.renameConversation(id, title, at),
+        setConversationArchived: (id, archived, at) => contextSqlite.setConversationArchived(id, archived, at),
+        setConversationPinned: (id, pinned, at) => contextSqlite.setConversationPinned(id, pinned, at),
+        deleteConversation: (id) => contextSqlite.deleteConversation(id)
+      },
+      getProfileId: () => settings.get().activeProfileId
     })
 
     const responseLanguage = (): string => settings.get().responseLanguage
@@ -538,6 +557,7 @@ if (!SINGLE_INSTANCE_LOCK) {
       transcript,
       screen,
       screenTranslation,
+      conversations,
       context: contextService,
       modes,
       practice,
