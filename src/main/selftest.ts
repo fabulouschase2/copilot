@@ -1372,6 +1372,119 @@ export async function runPrivacySelfTest(): Promise<void> {
   console.log('[selftest]', JSON.stringify(report))
 
   controller.dispose()
+  if (!probe.isDestroyed()) probe.destroy()
+  try {
+    nodeFs.rmSync(tmp, { recursive: true, force: true })
+  } catch {
+    /* best-effort */
+  }
+}
+
+/**
+ * Task 4 verification (no real Gemini key available):
+ *  - an invalid key fails with an honest auth message and never leaks the key;
+ *  - an unreachable endpoint fails cleanly;
+ *  - the local Ollama provider connects with no key (local-only mode);
+ *  - switching the active provider takes effect on the next resolution;
+ *  - the credential file never contains the key in clear text.
+ */
+export async function runProviderSelfTest(): Promise<void> {
+  const path = await import('node:path')
+  const { OpenAICompatibleProvider } = await import('./services/providers/openai-compatible')
+  const { ProviderRegistry } = await import('./services/provider-registry')
+  const { SettingsStore } = await import('./services/settings-store')
+  const { CredentialStore } = await import('./services/credential-store')
+  const electron = (await import('electron')) as typeof import('electron')
+  const { AppSettingsSchema } = await import('../shared/protocol')
+
+  const SECRET = 'TEST-KEY-DO-NOT-LOG-1234567890'
+  const geminiBase = 'https://generativelanguage.googleapis.com/v1beta/openai/'
+  const model = process.env['COPILOT_GEMINI_MODEL'] ?? 'gemini-2.0-flash'
+  const gemini = new OpenAICompatibleProvider({
+    id: 'gemini',
+    label: 'Google Gemini',
+    baseUrl: geminiBase,
+    apiKey: SECRET,
+    model,
+    vision: true
+  })
+
+  const report: Record<string, unknown> = {}
+
+  const conn = await gemini.testConnection()
+  report.geminiTestOk = conn.ok
+  report.geminiTestMessage = conn.message
+  report.geminiMessageLeaksKey = conn.message.includes(SECRET)
+
+  let chatError = ''
+  try {
+    for await (const chunk of gemini.chatStream({
+      model,
+      messages: [{ role: 'user', content: 'ping' }],
+      timeoutMs: 20_000,
+      maxTokens: 8
+    })) {
+      void chunk
+    }
+  } catch (err) {
+    chatError = err instanceof Error ? err.message : String(err)
+  }
+  report.geminiChatError = chatError
+  report.geminiChatLeaksKey = chatError.includes(SECRET)
+
+  const dead = new OpenAICompatibleProvider({
+    id: 'dead',
+    label: 'Dead endpoint',
+    baseUrl: 'http://127.0.0.1:9/v1',
+    apiKey: '',
+    model: 'x',
+    vision: false
+  })
+  const deadConn = await dead.testConnection()
+  report.unreachableOk = deadConn.ok
+  report.unreachableMessage = deadConn.message.slice(0, 120)
+
+  const ollama = new OpenAICompatibleProvider({
+    id: 'ollama',
+    label: 'Ollama',
+    baseUrl: 'http://127.0.0.1:11434/v1',
+    apiKey: '',
+    model: process.env['COPILOT_TRANSLATE_MODEL'] ?? 'qwen2.5:1.5b',
+    vision: false
+  })
+  const ollamaConn = await ollama.testConnection()
+  report.ollamaOk = ollamaConn.ok
+  report.ollamaLatencyMs = ollamaConn.latencyMs
+
+  const tmp = nodeFs.mkdtempSync(path.join(electron.app.getPath('temp'), 'copilot-prov-'))
+  const settings = new SettingsStore(path.join(tmp, 'settings.json'))
+  const creds = new CredentialStore(path.join(tmp, 'credentials.json'), electron.safeStorage)
+  const withProviders = AppSettingsSchema.parse({
+    providers: [
+      { id: 'gemini', label: 'Google Gemini', kind: 'openai-compatible', baseUrl: geminiBase, model: 'gemini-2.0-flash', vision: true, enabled: true },
+      { id: 'ollama', label: 'Ollama', kind: 'openai-compatible', baseUrl: 'http://127.0.0.1:11434/v1', model: 'qwen2.5:1.5b', vision: false, enabled: true }
+    ],
+    activeProviderId: 'gemini'
+  })
+  settings.set(withProviders)
+  const registry = new ProviderRegistry(settings, creds)
+  const first = registry.resolveActive()
+  settings.set({ ...settings.get(), activeProviderId: 'ollama' })
+  const second = registry.resolveActive()
+  report.switchFirst = first?.provider.label ?? null
+  report.switchSecond = second?.provider.label ?? null
+  report.switchWorks = first?.provider.label === 'Google Gemini' && second?.provider.label === 'Ollama'
+  report.localOnlyResolvesWithoutKey = second !== null && !creds.has('ollama')
+
+  creds.set('gemini', SECRET)
+  report.credentialSaved = creds.has('gemini') && creds.get('gemini') === SECRET
+  const credFile = path.join(tmp, 'credentials.json')
+  const raw = nodeFs.existsSync(credFile) ? nodeFs.readFileSync(credFile, 'utf-8') : ''
+  report.credentialFileContainsPlaintext = raw.includes(SECRET)
+
+  // eslint-disable-next-line no-console
+  console.log('[selftest]', JSON.stringify(report))
+
   try {
     nodeFs.rmSync(tmp, { recursive: true, force: true })
   } catch {

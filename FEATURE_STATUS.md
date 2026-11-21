@@ -17,7 +17,7 @@ Last updated: 2026-11-21 (after Phase 6).
 | Career Story Bank | Missing | **Implemented + verified** — 5 frameworks, ranking, grounded drafts | `docs/career-story-bank.md`; schema v4 |
 | Live translation | Missing | **Implemented + verified** (local model) | `docs/live-translation.md`: EN→ES 3.7 s, live event pipeline |
 | Screen intelligence (question, coding, documents) | Working | Working | Vision provider required |
-| Screen translation | Missing | Partial — the language engine translates text, but there is no screen-region translate action yet | Phase 5 remaining |
+| Screen translation | Missing | **Not implemented** | Needs a vision-capable provider for OCR; region selection and capture already exist |
 | Private overlay | Deliberately excluded | **Implemented + verified** | Display capture/GDI/PrintWindow exclude it; window-source capture does not (documented) |
 | Capture exclusion | Deliberately excluded | **Implemented + verified** (overlay only) | 8.21% → 0% magenta share |
 | Meeting intelligence | Working (summary, actions, search, export) | Working | Transcripts isolated per session |

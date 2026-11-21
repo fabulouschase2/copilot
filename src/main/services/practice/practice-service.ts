@@ -35,6 +35,8 @@ export interface PracticeDeps {
   resolveProvider: () => { provider: AIProvider; model: string } | null
   /** Facts of the active profile, for grounded behavioral follow-ups. */
   getProfileFacts: (profileId: string) => string[]
+  /** Titles/skills of saved stories, so practice targets real experience. */
+  getStoryDigest?: () => string
   getResponseLanguage: () => string
 }
 
@@ -294,6 +296,7 @@ export class PracticeService {
     }
     const requestId = `pq-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
     const facts = this.deps.getProfileFacts(a.profileId).join('\n- ')
+    const storyDigest = (this.deps.getStoryDigest?.() ?? '').trim()
     const system = practiceQuestionPrompt({
       type: a.type,
       difficulty: a.difficulty,
@@ -308,6 +311,9 @@ export class PracticeService {
         : '',
       facts.length > 0
         ? `Candidate's own profile facts (background only — the candidate HAS stated these; do not invent beyond them):\n- ${bounded(facts, MAX_FACT_CHARS)}`
+        : '',
+      storyDigest.length > 0
+        ? `Candidate's saved career stories (use them to aim questions at real experience; never invent details):\n${bounded(storyDigest, 2_000)}`
         : '',
       this.turnHistoryBlock(practiceId),
       index === 1

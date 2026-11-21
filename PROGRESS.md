@@ -225,6 +225,25 @@ Documented: display capture and legacy recorders honour exclusion; Chromium wind
 does not, so “share this specific window” must not be relied on. OBS and Meet remain unverified
 (see `docs/overlay-capture-exclusion.md`).
 
+## Task 4/5 — provider verification and shared context (delivered, key pending)
+
+Verified without a Gemini key (`COPILOT_SELFTEST=providers`):
+
+- Invalid key → honest HTTP 400, and the key never appears in the message or error.
+- Unreachable endpoint → clean failure.
+- Ollama connects with no key (13 ms) — local-only mode works.
+- Switching the active provider applies on the next resolution (no restart).
+- Credential round-trip works and the file on disk does not contain the key in clear.
+
+Still needed: the user's Gemini key entered in Settings → Providers, then a real generation and a
+vision pass. Documented in `docs/providers.md`.
+
+Context sharing: practice question generation now receives a digest of saved career stories (titles
++ skills) in addition to confirmed profile facts, so mock interviews target real experience.
+Interview answers already receive the top-ranked stories; meetings are deliberately excluded.
+Audit note: translation, stories and practice each perform exactly one provider call per unit of
+work — no engine re-runs another engine's inference.
+
 ## Remaining phases
 
 Tracked in `FEATURE_STATUS.md`. Cloud sync, billing and the phone companion require

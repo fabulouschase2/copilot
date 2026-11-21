@@ -121,6 +121,13 @@ if (!SINGLE_INSTANCE_LOCK) {
       })
       return
     }
+    if (process.env['COPILOT_SELFTEST'] === 'providers') {
+      void import('./selftest').then(async ({ runProviderSelfTest }) => {
+        await runProviderSelfTest()
+        app.exit(0)
+      })
+      return
+    }
     if (process.env['COPILOT_SELFTEST'] === 'provider-setup') {
       void import('./selftest').then(async ({ runProviderSetup }) => {
         await runProviderSetup()
@@ -300,7 +307,14 @@ if (!SINGLE_INSTANCE_LOCK) {
           return []
         }
       },
-      getResponseLanguage: responseLanguage
+      getResponseLanguage: responseLanguage,
+      // Practice questions are aimed at the user's real recorded experience.
+      getStoryDigest: () =>
+        stories
+          .list()
+          .slice(0, 8)
+          .map((s) => `- ${s.title}${s.skills.length > 0 ? ` [${s.skills.join(', ')}]` : ''}`)
+          .join('\n')
     })
     const permissionGate = new PermissionGate()
     const screenGate = new PermissionGate(SCREEN_CONSENT_TTL_MS)
