@@ -106,7 +106,11 @@ export const IPC = {
   whisperStatus: 'whisper:status',
   whisperStart: 'whisper:start',
   whisperStop: 'whisper:stop',
-  whisperConfigure: 'whisper:configure'
+  whisperConfigure: 'whisper:configure',
+  /* Live translation (Phase 4) */
+  translationResult: 'translation:result',
+  translationError: 'translation:error',
+  translationTest: 'translation:test'
 } as const
 
 export const ChatRoleSchema = z.enum(['system', 'user', 'assistant'])
@@ -161,7 +165,7 @@ export type TranscriptSource = z.infer<typeof TranscriptSourceSchema>
  * segment so meeting data can never contain interview questions and practice
  * sessions stay fully separate from both.
  */
-export const SessionPurposeSchema = z.enum(['interview', 'meeting', 'practice'])
+export const SessionPurposeSchema = z.enum(['interview', 'meeting', 'practice', 'translation'])
 export type SessionPurpose = z.infer<typeof SessionPurposeSchema>
 
 export const TranscriptPrepareRequestSchema = z.object({
@@ -883,6 +887,39 @@ export const WhisperConfigureRequestSchema = z.object({
 })
 export type WhisperConfigureRequest = z.infer<typeof WhisperConfigureRequestSchema>
 
+/* ─── Live translation (Phase 4) ─────────────────────────────────────── */
+
+/**
+ * Live translation settings. Translation runs on the active chat provider, so
+ * the panel can always name which provider is processing the captions.
+ */
+export const TranslationSettingsSchema = z.object({
+  enabled: z.boolean().default(false),
+  /** BCP-47-ish short code the engine translates into. */
+  targetLanguage: z.string().min(2).max(8).default('es'),
+  /** Show the recognized source line above its translation. */
+  showOriginal: z.boolean().default(true),
+  fontSize: z.number().int().min(11).max(24).default(15)
+})
+export type TranslationSettings = z.infer<typeof TranslationSettingsSchema>
+
+export interface TranslationResultEvent {
+  sessionId: string
+  segmentId: string
+  original: string
+  translated: string
+  targetLanguage: string
+  /** Which provider produced this line (never omitted). */
+  providerLabel: string
+  at: string
+}
+
+export interface TranslationErrorEvent {
+  sessionId: string
+  segmentId: string
+  message: string
+}
+
 export const AppSettingsSchema = z.object({
   providers: z.array(ProviderConfigSchema).max(20).default([]),
   activeProviderId: z.string().min(1).max(64).nullable().default(null),
@@ -928,6 +965,12 @@ export const AppSettingsSchema = z.object({
     threads: 4,
     language: 'auto',
     autoStart: true
+  }),
+  translation: TranslationSettingsSchema.default({
+    enabled: false,
+    targetLanguage: 'es',
+    showOriginal: true,
+    fontSize: 15
   })
 })
 export type AppSettings = z.infer<typeof AppSettingsSchema>
@@ -1235,4 +1278,8 @@ export interface CopilotApi {
   startWhisper(): Promise<WhisperStatusInfo>
   stopWhisper(): Promise<WhisperStatusInfo>
   configureWhisper(req: WhisperConfigureRequest): Promise<{ status: WhisperStatusInfo; settings: AppSettings }>
+  /* live translation */
+  testTranslation(text: string): Promise<{ ok: boolean; text: string; providerLabel: string; message?: string }>
+  onTranslationResult(cb: (e: TranslationResultEvent) => void): () => void
+  onTranslationError(cb: (e: TranslationErrorEvent) => void): () => void
 }

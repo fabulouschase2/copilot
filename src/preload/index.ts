@@ -197,6 +197,14 @@ const api: CopilotApi = {
   configureWhisper: (req: z.infer<typeof WhisperConfigureRequestSchema>) =>
     ipcRenderer.invoke(IPC.whisperConfigure, WhisperConfigureRequestSchema.parse(req)),
 
+  /* live translation (Phase 4) */
+  testTranslation: (text: string) =>
+    ipcRenderer.invoke(IPC.translationTest, String(text).slice(0, 5_000)),
+  onTranslationResult: (cb: (e: import('../shared/protocol').TranslationResultEvent) => void) =>
+    on(IPC.translationResult, cb),
+  onTranslationError: (cb: (e: import('../shared/protocol').TranslationErrorEvent) => void) =>
+    on(IPC.translationError, cb),
+
   onChatChunk: (cb: (e: ChatChunkEvent) => void) => {
     const listener = (_e: unknown, payload: ChatChunkEvent): void => cb(payload)
     ipcRenderer.on(IPC.chatChunk, listener)

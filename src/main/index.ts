@@ -19,6 +19,7 @@ import { SQLiteStore } from './services/context/sqlite-store'
 import { migrateLegacyJson } from './services/context/migration'
 import { MeetingSaveRequestSchema, WhisperConfigureRequest } from '../shared/protocol'
 import { LocalWhisperManager, detectWhisperInstalls } from './services/stt/local-whisper'
+import { TranslationService } from './services/translation/translation-service'
 import { ModesService } from './services/modes/modes-service'
 import { OverlayController } from './overlay-window'
 import { PracticeService } from './services/practice/practice-service'
@@ -79,6 +80,13 @@ if (!SINGLE_INSTANCE_LOCK) {
     if (process.env['COPILOT_SELFTEST'] === 'whisper') {
       void import('./selftest').then(async ({ runWhisperSelfTest }) => {
         await runWhisperSelfTest()
+        app.exit(0)
+      })
+      return
+    }
+    if (process.env['COPILOT_SELFTEST'] === 'translation') {
+      void import('./selftest').then(async ({ runTranslationSelfTest }) => {
+        await runTranslationSelfTest()
         app.exit(0)
       })
       return
@@ -155,6 +163,15 @@ if (!SINGLE_INSTANCE_LOCK) {
     })
 
     const responseLanguage = (): string => settings.get().responseLanguage
+    // Phase 4: live translation runs on the active chat provider, independent
+    // of interview answer generation.
+    const translation = new TranslationService({
+      resolveProvider: () => {
+        const r = registry.resolveActive()
+        return r ? { provider: r.provider, model: r.model } : null
+      },
+      getSettings: () => settings.get().translation
+    })
     const chat = new ChatController(registry, (question) =>
       contextService.retrieve(question, {
         includeDocuments: true,
@@ -400,6 +417,7 @@ if (!SINGLE_INSTANCE_LOCK) {
       practice,
       permissionGate,
       overlay,
+      translation,
       getWindow: getMainWindow,
       listMeetings,
       saveMeeting,

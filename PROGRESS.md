@@ -93,6 +93,34 @@ Verified:
 
 Evidence: `docs/local-whisper.md`.
 
+## Phase 4 — live translation (delivered)
+
+Implemented:
+
+- `src/main/services/translation/translation-service.ts` — independent language engine: serial
+  queue capped at 4 pending lines, provider named on every result, mechanical wrappers stripped,
+  empty output treated as failure, session reset aborts in-flight work.
+- New `translation` session purpose, so translation audio never mixes with interview, meeting or
+  practice transcripts.
+- `src/shared/languages.ts` — 49 selectable target languages.
+- **Translate** panel: mic/system source, target language, show-original toggle, caption size,
+  live rows with per-line provider attribution, and a “Test the engine” box that cannot disturb a
+  live session.
+- Translated lines mirror to the private overlay (Phase 6 integration).
+
+Verified:
+
+- Real model, no API key: Ollama `qwen2.5:1.5b` translated English → Spanish in 3.7 s, and the
+  live pipeline (`observeSegment` → `translation:result`) produced exactly one correctly
+  attributed event.
+- `tests/translation-phase4.test.ts`: 15 tests (prompt contract, sanitising, missing provider,
+  provider error, empty output, disabled mode, one-result-per-segment, backlog bound, session
+  reset, schema bounds).
+- Full suite after the phase: **330 / 330 passed**; typecheck and build clean.
+
+Not verified: cloud providers (no key), non-English source audio, and a real microphone session
+for translation. Evidence and caveats: `docs/live-translation.md`.
+
 ## Remaining phases
 
 Tracked in `FEATURE_STATUS.md`. Cloud sync, billing and the phone companion require

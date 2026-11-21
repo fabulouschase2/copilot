@@ -53,6 +53,7 @@ import { ProviderRegistry } from './services/provider-registry'
 import { SettingsStore } from './services/settings-store'
 import { SttRegistry } from './services/stt/stt-registry'
 import type { PracticeService } from './services/practice/practice-service'
+import type { TranslationService } from './services/translation/translation-service'
 import type { OverlayController } from './overlay-window'
 import { OverlayContentSchema, OverlaySetRequestSchema, WhisperConfigureRequestSchema } from '../shared/protocol'
 
@@ -69,6 +70,7 @@ export interface IpcDeps {
   practice: PracticeService
   permissionGate: PermissionGate
   overlay: OverlayController
+  translation: TranslationService
   getWindow: () => BrowserWindow | null
   persistence: {
     status: () => import('../shared/protocol').ContextPersistenceStatus
@@ -495,13 +497,25 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   })
 
   transcript.bindEvents({
-    onStatus: (e) => send(getWindow(), IPC.transcriptStatus, e),
+    onStatus: (e) => {
+      send(getWindow(), IPC.transcriptStatus, e)
+      // A stopped session ends its translation queue (no stale captions).
+      if (e.state === 'stopped') deps.translation.reset(null)
+    },
     onPartial: (e) => send(getWindow(), IPC.transcriptPartial, e),
     onSegment: (e) => {
       send(getWindow(), IPC.transcriptSegment, e)
       // Stage 8: feed finalized segments into interview question detection.
       // Practice/meeting sessions must never create interview questions.
       if (e.purpose === 'interview') modes.observeTranscriptSegment(e.sessionId, e.text)
+      // Phase 4: translation sessions feed the language engine only.
+      if (e.purpose === 'translation') {
+        deps.translation.observeSegment({
+          sessionId: e.sessionId,
+          segmentId: e.segmentId,
+          text: e.text
+        })
+      }
     },
     onError: (e) => send(getWindow(), IPC.transcriptError, e),
     onMetrics: (e) => send(getWindow(), IPC.transcriptMetrics, e)
@@ -529,5 +543,17 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     onEvaluated: (e) => send(getWindow(), IPC.practiceEvaluated, e),
     onFinished: (e) => send(getWindow(), IPC.practiceFinished, e),
     onError: (e) => send(getWindow(), IPC.practiceError, e)
+  })
+
+  deps.translation.bindEvents({
+    onResult: (e) => send(getWindow(), IPC.translationResult, e),
+    onError: (e) => send(getWindow(), IPC.translationError, e)
+  })
+
+  ipcMain.handle(IPC.translationTest, async (_e, raw: unknown) => {
+    if (typeof raw !== 'string' || raw.trim().length === 0 || raw.length > 5_000) {
+      return { ok: false, text: '', providerLabel: 'none', message: 'Enter up to 5000 characters to translate.' }
+    }
+    return deps.translation.translateDetached(raw)
   })
 }

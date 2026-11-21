@@ -157,6 +157,13 @@ export class OverlayController {
       if (p?.channel !== 'interview' || typeof p.text !== 'string' || p.text.length === 0) return
       if (p.status !== undefined && p.status !== 'completed') return
       this.push({ kind: 'answer', text: p.text })
+      return
+    }
+    // Phase 4: translated captions are the useful line inside the overlay.
+    if (channel === 'translation:result') {
+      const p = payload as { translated?: unknown }
+      if (typeof p?.translated !== 'string' || p.translated.length === 0) return
+      this.push({ kind: 'caption', text: p.translated })
     }
   }
 

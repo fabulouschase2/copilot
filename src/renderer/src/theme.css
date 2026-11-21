@@ -728,3 +728,36 @@ input[type='checkbox'] { accent-color: var(--accent); }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 .loading-row { display: flex; align-items: center; gap: 8px; color: var(--text-dim); font-size: var(--fs-sm); }
+
+/* ── Live translation (Phase 4) ─────────────────────────────────────── */
+.translate-panel { display: flex; flex-direction: column; gap: var(--gap); }
+.translate-captions {
+  max-height: 46vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.translate-row {
+  padding: 6px 8px;
+  border-left: 2px solid var(--border-strong);
+  background: var(--bg-elev);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+.translate-original {
+  color: var(--text-dim);
+  font-size: 0.82em;
+  margin-bottom: 3px;
+}
+.translate-translated {
+  color: var(--text);
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+.translate-meta {
+  margin-top: 3px;
+  font-size: 10px;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}

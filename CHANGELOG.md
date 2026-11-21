@@ -6,6 +6,10 @@ All notable user-facing changes. Versions follow the app's `package.json`.
 
 ### Added
 
+- **Live translation** (Phase 4): capture mic or system audio and see each finalized utterance
+  translated into any of 49 target languages, with the producing provider named on every line.
+  Translated captions also appear in the private overlay. Verified with a real local model
+  (English → Spanish, 3.7 s); cloud providers were not exercised.
 - **Local speech recognition** (Phase 1): Copilot manages a local whisper.cpp server — detection,
   start/stop, readiness checks, crash reporting — so transcription can run entirely on-device with
   no API key. Measured 11 s of audio transcribed in 0.53 s on CPU with the `tiny` model.

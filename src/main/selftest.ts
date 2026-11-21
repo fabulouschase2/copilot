@@ -700,3 +700,67 @@ export async function runWhisperSelfTest(): Promise<void> {
   console.log('[selftest]', JSON.stringify(report))
   manager.dispose()
 }
+
+/**
+ * Phase 4 verification: translate real text through a real provider. Uses the
+ * local Ollama runtime when it is up (no API key needed), and also exercises
+ * the live-segment pipeline (observeSegment -> onResult) end to end.
+ */
+export async function runTranslationSelfTest(): Promise<void> {
+  const { OpenAICompatibleProvider } = await import('./services/providers/openai-compatible')
+  const { TranslationService } = await import('./services/translation/translation-service')
+
+  const baseUrl = process.env['COPILOT_TRANSLATE_BASEURL'] ?? 'http://127.0.0.1:11434/v1'
+  const model = process.env['COPILOT_TRANSLATE_MODEL'] ?? 'qwen2.5:1.5b'
+  const provider = new OpenAICompatibleProvider({
+    id: 'selftest-ollama',
+    label: 'Ollama (self-test)',
+    baseUrl,
+    apiKey: '',
+    model,
+    vision: false
+  })
+
+  const settings = { enabled: true, targetLanguage: 'es', showOriginal: true, fontSize: 15 }
+  const service = new TranslationService({
+    resolveProvider: () => ({ provider, model }),
+    getSettings: () => settings
+  })
+
+  const source = 'Good morning. I led a team of four engineers and reduced build times by forty percent.'
+  const t0 = Date.now()
+  const direct = await service.translate(source)
+  const directMs = Date.now() - t0
+
+  // Live pipeline: a finalized segment must produce exactly one result event.
+  const events: Array<Record<string, unknown>> = []
+  service.bindEvents({
+    onResult: (e) => events.push({ kind: 'result', text: e.translated, provider: e.providerLabel }),
+    onError: (e) => events.push({ kind: 'error', message: e.message })
+  })
+  service.observeSegment({
+    sessionId: 'selftest-session',
+    segmentId: 'seg-1',
+    text: 'You should be concise when you answer.'
+  })
+  const deadline = Date.now() + 60_000
+  while (events.length === 0 && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 100))
+  }
+
+  const report = {
+    baseUrl,
+    model,
+    ok: direct.ok,
+    translated: direct.text.slice(0, 200),
+    providerLabel: direct.providerLabel,
+    latencyMs: directMs,
+    error: direct.ok ? undefined : direct.message,
+    liveEventCount: events.length,
+    liveEvents: events,
+    stats: service.stats()
+  }
+  // eslint-disable-next-line no-console
+  console.log('[selftest]', JSON.stringify(report))
+  service.reset(null)
+}
