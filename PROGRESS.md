@@ -149,6 +149,24 @@ Evidence: `docs/career-story-bank.md`.
 
 Still open in this phase: DOCX résumé import and a per-fact confirmation workflow.
 
+## Phase 11 — production readiness (partial)
+
+Done in this pass:
+
+- Full suite **353 / 353 passing** (43 files), `typecheck` clean, production build clean.
+- **UI smoke test** (`COPILOT_SELFTEST=ui`): the real built renderer loads through the real
+  preload, all 7 navigation views plus Settings render non-empty, and the renderer logs **zero**
+  console errors. Screenshots of every view are in `docs/screenshots/`.
+- **Packaged build verified**: `Copilot-Setup-0.3.0.exe` (98.1 MB) built; the unpacked app was
+  launched and its overlay self-test still reports `osConfirmsExclusion: true` with
+  8.21% → 0% captured pixels, proving the koffi native binding survives asar packaging.
+- Documentation set completed: `ARCHITECTURE.md`, `TESTING.md`, `SETUP.md`, plus the four phase
+  documents. `docs/architecture.md` was corrected where it previously claimed capture exclusion
+  was out of scope.
+
+Still open for a full Phase 11: signed installer (no certificate), installer uninstall/reinstall
+cycle, migration test against a real user database, and a sustained memory test on 8 GB hardware.
+
 ## Remaining phases
 
 Tracked in `FEATURE_STATUS.md`. Cloud sync, billing and the phone companion require

@@ -8,7 +8,7 @@
 
 | Option | Verdict | Reason |
 |---|---|---|
-| **Electron + TS** | **chosen** | Windows is the confirmed primary platform (user's machine); Electron gives first-class system-audio capture APIs (`desktopCapturer`, WebAudio loopback on Windows), display-affinity-free windowing (we *want* to be captured), `safeStorage` for key encryption, global shortcuts, multi-display screenshot APIs, and one codebase portable to macOS later — matching Poisely's platform coverage while Tails (macOS-only) and NoteMotion (Windows-only) each cover only half. |
+| **Electron + TS** | **chosen** | Windows is the confirmed primary platform (user's machine); Electron gives first-class system-audio capture APIs (`desktopCapturer`, WebAudio loopback on Windows), windowing plus native window-handle access (used by the overlay's capture exclusion, Phase 6), `safeStorage` for key encryption, global shortcuts, multi-display screenshot APIs, and one codebase portable to macOS later — matching Poisely's platform coverage while Tails (macOS-only) and NoteMotion (Windows-only) each cover only half. |
 | Tauri + Rust | rejected for now | Smaller binaries, but system-audio loopback capture on Windows requires nontrivial custom Rust (WASAPI) work; team velocity and library ecosystem (screen capture, WASAPI, SSE streaming) favor Electron at this stage. Revisit at packaging stage if memory footprint is unacceptable. |
 | Native (WinUI/WPF) | rejected | Windows-only contradicts the portability requirement; slower iteration. |
 
@@ -149,7 +149,7 @@ Backups: VACUUM INTO into userData/backups (WAL-safe), retention 5,
 
 **Standing invariants (regression-tested):** sandbox + contextIsolation + no nodeIntegration; one narrow bridge; CSP `self`; popups denied; no key material in built bundles; PDF import (user requirement) behind the same validation/bounds pipeline as text; window bounds persist; hardware acceleration off.
 
-**UI:** Interview-first landing (Poisely-style flow — question → style pills → grounded answer with sources + evidence warnings; 📄 Resume / 🖥️ Read screen quick actions). No capture evasion: the Read-screen action is consent-gated and visible; the app never hides from screen sharing (documented: sharing a whole display exposes it).
+**UI:** Interview-first landing (Poisely-style flow — question → style pills → grounded answer with sources + evidence warnings; 📄 Resume / 🖥️ Read screen quick actions). The main window is fully capturable and visible in shares; the Read-screen action is consent-gated. The optional private overlay (Phase 6) is the *only* window that requests capture exclusion, and only after Windows confirms it (`docs/overlay-capture-exclusion.md`).
 
 ## Component separation (spec §14 mapping)
 
@@ -208,7 +208,7 @@ interface AIProvider {
 3. API keys: `safeStorage`-encrypted at rest; decrypted only in main, only at request time; never sent to renderer; never logged. If OS encryption is unavailable the store **refuses** to save (no silent plaintext).
 4. All renderer input validated by zod schemas with hard size limits before use.
 5. Error events carry human-readable, secret-free messages — no stacks, no URLs with keys.
-6. Visible window by default; no display-affinity tricks, no capture exclusion, no autotyper (documented exclusions in `feature-comparison.md`).
+6. Visible main window; no autotyper. Phase 6 added an *optional* overlay window that requests `WDA_EXCLUDEFROMCAPTURE` and reports the OS-confirmed result — scoped to that window only, disabled by default, and documented with measured limits (`docs/overlay-capture-exclusion.md`).
 
 ## Performance approach (§15)
 

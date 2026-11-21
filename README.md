@@ -5,7 +5,7 @@ interviews with scorecards, complete meeting notes, live transcription, screen u
 multi-provider streaming chat — with user-controlled context, personal profiles, and local-first
 storage. Built with Electron 38 + TypeScript + React 19.
 
-## Status (0.2.2 — credential UI + acceptance run)
+## Status (0.3.0 — overlay, local STT, translation, story bank)
 
 | Area | Scope | Status |
 |---|---|---|
@@ -17,6 +17,9 @@ storage. Built with Electron 38 + TypeScript + React 19.
 | Session isolation | Purpose-tagged transcription sessions (`interview` / `meeting` / `practice`) — transcripts never leak across workflows | ✅ implemented |
 | Packaging | NSIS installer built, installed and launch-verified (`dist/Copilot-Setup-0.2.1.exe`) | ✅ verified |
 | Private overlay | Frameless always-on-top captions/answer window; Windows `WDA_EXCLUDEFROMCAPTURE` with OS-confirmed status; `Ctrl+Alt+O`; measured 8.21% → 0% captured pixels | ✅ implemented, capture exclusion measured |
+| Local Whisper | Managed whisper.cpp server: detection, start/stop, readiness, crash reporting; `/inference` adapter; 11 s audio → 0.53 s on CPU | ✅ implemented, real audio verified |
+| Live translation | 49 target languages on the active provider; per-line provider attribution; translated captions mirrored to the overlay | ✅ implemented, verified with a local model |
+| Career story bank | STAR/CAR/PAR/SOAR/answer-first, deterministic relevance, fact-grounded drafts; auto-attached to interview prompts; schema v4 | ✅ implemented, real draft verified |
 | Audio pipeline | **Fixed & verified with real audio on Windows (dev + installed)**: renderer capture wiring + Electron getDisplayMedia permission flow; honest state reporting via the new Audio diagnostics view | ✅ real-audio verified |
 | Transcription E2E | Real STT requests reach the provider; results **BLOCKED on the user saving a Groq API key** (the provider returns 401, surfaced verbatim). Pipeline verified end-to-end up to the credential boundary; once a key is saved, transcription works. | BLOCKED (one-time user action) |
 | Speaker diarization | Not implemented — segments are labeled by capture source (Mic vs System) only, never presented as speaker identities | — honest exclusion |
@@ -105,6 +108,28 @@ when you end the meeting, notes stay editable, action items are structured with 
 owners/deadlines ("(not stated)" when absent), and you can save, search, reopen, delete and export
 (MD/TXT) meetings — plus ask questions about any saved meeting's transcript. Meeting sessions are
 separate from interview sessions; transcripts never cross.
+
+## Career stories
+
+**Stories** keeps your own experiences in STAR, CAR, PAR, SOAR or answer-first form. Search
+them, edit them, or draft from the facts you confirmed in Settings — drafts always land in the
+editor for review and are never saved automatically. The Interview view attaches the most
+relevant stories (max 3) to your question, with the match reason recorded in the sources list.
+
+## Live translation
+
+**Translate** captures mic or system audio and translates each finalized line into one of 49
+target languages using the active chat provider. Each line shows which provider produced it;
+failed lines show the error. Translated captions also appear in the private overlay. The queue
+is bounded, so slow models drop old lines (and say so) instead of falling minutes behind.
+
+## Private overlay
+
+**Overlay** opens a frameless, always-on-top window with live captions and the latest answer
+(`Ctrl+Alt+O`). On Windows 10 2004+ the window is marked `WDA_EXCLUDEFROMCAPTURE`, so capture
+APIs that honour the flag omit it. The panel shows the OS-reported affinity — not the setting
+you asked for — plus the Win32 error code when the call fails. See
+`docs/overlay-capture-exclusion.md` for what was measured and what was not.
 
 ## Screen analysis
 

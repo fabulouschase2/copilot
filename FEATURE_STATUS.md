@@ -27,7 +27,7 @@ Last updated: 2026-11-21 (after Phase 6).
 | Accounts / cloud sync | Missing | **Blocked** | Needs a server and credentials; local-first behaviour is unchanged |
 | Subscriptions / payments | Missing | **Blocked** | No payment provider configured; never simulated |
 | Usage dashboard | Missing | Partial — local token/latency figures exist per answer | No billing backend to aggregate against |
-| Windows packaging | NSIS installer verified at 0.2.1 | Rebuilt and launch-verified | `dist/` |
+| Windows packaging | NSIS installer verified at 0.2.1 | **Rebuilt and verified** — `dist/Copilot-Setup-0.3.0.exe`; capture exclusion re-tested in the packaged app | Unsigned (no certificate) |
 
 ## Deliberate non-features
 

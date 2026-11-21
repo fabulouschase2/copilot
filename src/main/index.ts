@@ -99,6 +99,13 @@ if (!SINGLE_INSTANCE_LOCK) {
       })
       return
     }
+    if (process.env['COPILOT_SELFTEST'] === 'ui') {
+      void import('./selftest').then(async ({ runUiSelfTest }) => {
+        await runUiSelfTest()
+        app.exit(0)
+      })
+      return
+    }
     if (process.env['COPILOT_SELFTEST'] === 'provider-setup') {
       void import('./selftest').then(async ({ runProviderSetup }) => {
         await runProviderSetup()

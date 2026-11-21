@@ -843,3 +843,147 @@ export async function runStorySelfTest(): Promise<void> {
   // eslint-disable-next-line no-console
   console.log('[selftest]', JSON.stringify(report))
 }
+
+/**
+ * UI smoke test: loads the real built renderer with the real preload and clicks
+ * through every navigation view, collecting renderer console errors. Stubs only
+ * the IPC reads that run on mount, so the React tree itself is the real thing.
+ */
+export async function runUiSelfTest(): Promise<void> {
+  const electron = (await import('electron')) as typeof import('electron')
+  const { AppSettingsSchema } = await import('../shared/protocol')
+  const { createMainWindow } = await import('./window')
+
+  const settings = AppSettingsSchema.parse({})
+  const overlayState = {
+    enabled: false,
+    visible: false,
+    captureExcluded: true,
+    affinity: null,
+    exclusionActive: false,
+    exclusionUnverified: false,
+    support: 'supported',
+    supportMessage: 'stub',
+    opacity: 0.94,
+    fontSize: 15,
+    showCaptions: true,
+    error: null,
+    lastErrorCode: null
+  }
+  const whisperState = {
+    phase: 'stopped',
+    port: 8123,
+    baseUrl: 'http://127.0.0.1:8123',
+    serverExe: '',
+    modelPath: '',
+    serverExePresent: false,
+    modelPresent: false,
+    pid: null,
+    message: 'not configured',
+    lastError: null,
+    logTail: [],
+    activeAsStt: false
+  }
+
+  electron.ipcMain.handle('settings:get', () => settings)
+  electron.ipcMain.handle('settings:set', () => settings)
+  electron.ipcMain.handle('overlay:get-state', () => overlayState)
+  electron.ipcMain.handle('overlay:set', () => overlayState)
+  electron.ipcMain.handle('stories:list', () => ({ stories: [] }))
+  electron.ipcMain.handle('context:list', () => ({
+    sources: [],
+    session: { id: null, transcriptItems: 0, screenItems: 0 }
+  }))
+  electron.ipcMain.handle('context:persistence-status', () => ({
+    kind: 'sqlite',
+    schemaVersion: 4,
+    counts: { documents: 0, facts: 0, meetings: 0, practiceSessions: 0 },
+    migration: null,
+    lastBackupAt: null,
+    backupsAvailable: 0
+  }))
+  electron.ipcMain.handle('profiles:list', () => ({ profiles: [] }))
+  electron.ipcMain.handle('practice:list', () => ({ sessions: [] }))
+  electron.ipcMain.handle('meetings:list', () => ({ meetings: [] }))
+  electron.ipcMain.handle('providers:list', () => ({ providers: [] }))
+  electron.ipcMain.handle('stt:providers-list', () => ({ providers: [] }))
+  electron.ipcMain.handle('whisper:status', () => whisperState)
+  electron.ipcMain.handle('audio:diagnostics', () => ({
+    configuredSource: 'mic',
+    stt: { label: null, kind: null, language: null, cloudOrLocal: 'none', hasCredential: false },
+    permissions: { mediaArmed: false, displayCaptureArmed: false },
+    session: null,
+    lastSegmentAt: null,
+    lastError: null
+  }))
+
+  const win = createMainWindow()
+  const consoleErrors: string[] = []
+  win.webContents.on('console-message', (_e, level, message) => {
+    if (level >= 2) consoleErrors.push(String(message).slice(0, 300))
+  })
+
+  await new Promise<void>((resolve) => {
+    if (!win.webContents.isLoading()) return resolve()
+    win.webContents.once('did-finish-load', () => resolve())
+  })
+  // Let React mount and run its effects.
+  await new Promise((r) => setTimeout(r, 1_500))
+
+  const navLabels: string[] = await win.webContents.executeJavaScript(
+    '[...document.querySelectorAll(".nav-btn")].map(b => b.textContent.trim())'
+  )
+  const shotDir = process.env['COPILOT_SHOT_DIR'] ?? ''
+  const shots: string[] = []
+  const captureShot = async (name: string): Promise<void> => {
+    if (!shotDir) return
+    try {
+      const path = await import('node:path')
+      nodeFs.mkdirSync(shotDir, { recursive: true })
+      const img = await win.capturePage()
+      const file = path.join(shotDir, `${name}.png`)
+      nodeFs.writeFileSync(file, img.toPNG())
+      shots.push(file)
+    } catch {
+      /* screenshots are evidence, never a reason to fail the smoke test */
+    }
+  }
+  const views: Array<{ label: string; rendered: boolean; chars: number }> = []
+  for (const label of navLabels) {
+    const result = await win.webContents.executeJavaScript(`(() => {
+      const btn = [...document.querySelectorAll('.nav-btn')].find(b => b.textContent.trim() === ${JSON.stringify(label)});
+      if (!btn) return { rendered: false, chars: 0 };
+      btn.click();
+      return new Promise((resolve) => setTimeout(() => {
+        const view = document.querySelector('.view');
+        resolve({ rendered: Boolean(view), chars: view ? view.textContent.trim().length : 0 });
+      }, 350));
+    })()`)
+    views.push({ label, ...(result as { rendered: boolean; chars: number }) })
+    await captureShot(`view-${label.toLowerCase()}`)
+  }
+
+  // Settings is reached from the header, not the nav.
+  const settingsResult = await win.webContents.executeJavaScript(`(() => {
+    const btn = [...document.querySelectorAll('button')].find(b => b.textContent.includes('Settings'));
+    if (!btn) return { rendered: false, chars: 0 };
+    btn.click();
+    return new Promise((resolve) => setTimeout(() => {
+      const view = document.querySelector('.view');
+      resolve({ rendered: Boolean(view), chars: view ? view.textContent.trim().length : 0 });
+    }, 500));
+  })()`)
+
+  const report = {
+    navCount: navLabels.length,
+    navLabels,
+    views,
+    settings: settingsResult,
+    shots,
+    emptyViews: views.filter((v) => v.chars < 20).map((v) => v.label),
+    consoleErrors
+  }
+  // eslint-disable-next-line no-console
+  console.log('[selftest]', JSON.stringify(report))
+  win.destroy()
+}
