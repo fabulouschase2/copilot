@@ -5,7 +5,7 @@ interviews with scorecards, complete meeting notes, live transcription, screen u
 multi-provider streaming chat — with user-controlled context, personal profiles, and local-first
 storage. Built with Electron 38 + TypeScript + React 19.
 
-## Status (0.3.0 — overlay, local STT, translation, story bank)
+## Status (0.4.0 — routing modes, screen translation, verified facts)
 
 | Area | Scope | Status |
 |---|---|---|
@@ -20,6 +20,8 @@ storage. Built with Electron 38 + TypeScript + React 19.
 | Local Whisper | Managed whisper.cpp server: detection, start/stop, readiness, crash reporting; `/inference` adapter; 11 s audio → 0.53 s on CPU | ✅ implemented, real audio verified |
 | Live translation | 49 target languages on the active provider; per-line provider attribution; translated captions mirrored to the overlay | ✅ implemented, verified with a local model |
 | Career story bank | STAR/CAR/PAR/SOAR/answer-first, deterministic relevance, fact-grounded drafts; auto-attached to interview prompts; schema v4 | ✅ implemented, real draft verified |
+| AI modes & routing | local / cloud / hybrid with privacy-aware selection; cloud excluded for private tasks unless allowed; live routing display | ✅ implemented, 14 tests |
+| Screen translation | Region capture → local Windows OCR → 49-language engine; original + translation, copy, send to overlay, history | ✅ verified end to end, no cloud key |
 | Audio pipeline | **Fixed & verified with real audio on Windows (dev + installed)**: renderer capture wiring + Electron getDisplayMedia permission flow; honest state reporting via the new Audio diagnostics view | ✅ real-audio verified |
 | Transcription E2E | Real STT requests reach the provider; results **BLOCKED on the user saving a Groq API key** (the provider returns 401, surfaced verbatim). Pipeline verified end-to-end up to the credential boundary; once a key is saved, transcription works. | BLOCKED (one-time user action) |
 | Speaker diarization | Not implemented — segments are labeled by capture source (Mic vs System) only, never presented as speaker identities | — honest exclusion |
@@ -138,6 +140,10 @@ shows it. See `docs/overlay-capture-exclusion.md` for the measured matrix and li
 Answer visible question · Solve coding problem) or ask your own, optionally drag a region on the
 capture preview and re-analyze the selection. One capture per click, nothing in the background,
 duplicate screens skip the provider call, provider errors surface verbatim, Retry included.
+
+The same modal translates: choose a target language and press **Translate selection**. Text is read
+by the OCR engine built into Windows (local, no key) and translated by the active provider; the
+recognised text stays visible even if translation fails.
 
 ## Context & data storage
 

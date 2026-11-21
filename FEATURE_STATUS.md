@@ -17,7 +17,8 @@ Last updated: 2026-11-21 (after Phase 6).
 | Career Story Bank | Missing | **Implemented + verified** — 5 frameworks, ranking, grounded drafts | `docs/career-story-bank.md`; schema v4 |
 | Live translation | Missing | **Implemented + verified** (local model) | `docs/live-translation.md`: EN→ES 3.7 s, live event pipeline |
 | Screen intelligence (question, coding, documents) | Working | Working | Vision provider required |
-| Screen translation | Missing | **Not implemented** | Needs a vision-capable provider for OCR; region selection and capture already exist |
+| Screen translation | Missing | **Implemented + verified** | `docs/screen-translation.md`: OCR exact, ES translation 6.3 s, blank region refused |
+| AI modes / routing | Missing | **Implemented + tested** | `docs/providers.md`; 14 routing tests |
 | Private overlay | Deliberately excluded | **Implemented + verified** | Display capture/GDI/PrintWindow exclude it; window-source capture does not (documented) |
 | Capture exclusion | Deliberately excluded | **Implemented + verified** (overlay only) | 8.21% → 0% magenta share |
 | Meeting intelligence | Working (summary, actions, search, export) | Working | Transcripts isolated per session |
@@ -25,6 +26,8 @@ Last updated: 2026-11-21 (after Phase 6).
 | AI chat with context | Working | Working | Profile/story/meeting context selectable |
 | Phone companion | Missing | **Blocked** | Needs a mobile client + pairing backend; no toolchain here. Desktop-side pairing contract is documented, not faked. |
 | Accounts / cloud sync | Missing | **Blocked** | Needs a server and credentials; local-first behaviour is unchanged |
+| Voice assistant (push-to-talk) | Missing | **Not implemented** | Planned: reuses local Whisper + TTS; needs a dedicated session purpose and panel |
+| Conversation persistence | Missing | **Not implemented** | Chat is session-only today; needs schema v6 (conversations/messages) and history UI |
 | Subscriptions / payments | Missing | **Blocked** | No payment provider configured; never simulated |
 | Usage dashboard | Missing | Partial — local token/latency figures exist per answer | No billing backend to aggregate against |
 | Windows packaging | NSIS installer verified at 0.2.1 | **Rebuilt and verified** — `dist/Copilot-Setup-0.3.0.exe`; capture exclusion re-tested in the packaged app | Unsigned (no certificate) |

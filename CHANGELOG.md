@@ -2,6 +2,27 @@
 
 All notable user-facing changes. Versions follow the app's `package.json`.
 
+## 0.4.0
+
+### Added
+
+- **AI modes and routing**: local-only, cloud-only or hybrid (default). Cloud providers are excluded
+  for private material (screen captures, meeting audio, career facts) unless you explicitly allow
+  it, and local mode never makes a cloud request. Settings shows the live routing order.
+- **Screen translation**: select a region, read it with the OCR engine built into Windows (local,
+  no key) and translate it into any of the 49 targets. Original and translation are shown together,
+  with copy and send-to-overlay.
+- Windows OCR needs no download; only installed Windows OCR languages are recognised (en-US here).
+
+### Changed
+
+- `resolveActive` / `resolveVision` now follow the routing rules, so every existing feature
+  inherits mode and privacy handling.
+
+### Notes
+
+- Screen translation was verified end to end without a cloud key (local OCR + Ollama).
+
 ## Unreleased — Klevi-level transformation
 
 ### Added
