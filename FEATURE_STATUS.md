@@ -12,9 +12,9 @@ Last updated: 2026-11-21 (after Phase 6).
 | Live transcription (cloud STT) | Working pipeline, blocked on user key | Working pipeline | Needs a Groq/OpenAI key; provider 401 surfaces verbatim |
 | Local transcription (whisper.cpp) | Not integrated | **Implemented + verified** — managed server | `docs/local-whisper.md`: 11 s audio → 0.53 s, `/inference` contract |
 | AI interview answers | Working | Working | Phase 3 adds story-bank grounding |
-| Career profile + fact CRUD | Multiple profiles, facts | Working | Confirmation workflow planned (Phase 2) |
-| Résumé import | PDF/TXT/MD | PDF/TXT/MD | DOCX planned (Phase 2) |
-| Career Story Bank | Missing | Planned (Phase 2) | — |
+| Career profile + fact CRUD | Multiple profiles, facts | Working | Per-fact confirmation workflow still open |
+| Résumé import | PDF/TXT/MD | PDF/TXT/MD | DOCX still open |
+| Career Story Bank | Missing | **Implemented + verified** — 5 frameworks, ranking, grounded drafts | `docs/career-story-bank.md`; schema v4 |
 | Live translation | Missing | **Implemented + verified** (local model) | `docs/live-translation.md`: EN→ES 3.7 s, live event pipeline |
 | Screen intelligence (question, coding, documents) | Working | Working | Vision provider required |
 | Screen translation | Missing | Partial — the language engine translates text, but there is no screen-region translate action yet | Phase 5 remaining |

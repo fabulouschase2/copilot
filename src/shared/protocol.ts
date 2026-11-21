@@ -110,7 +110,12 @@ export const IPC = {
   /* Live translation (Phase 4) */
   translationResult: 'translation:result',
   translationError: 'translation:error',
-  translationTest: 'translation:test'
+  translationTest: 'translation:test',
+  /* Career story bank (Phase 2) */
+  storiesList: 'stories:list',
+  storiesUpsert: 'stories:upsert',
+  storiesDelete: 'stories:delete',
+  storiesDraft: 'stories:draft'
 } as const
 
 export const ChatRoleSchema = z.enum(['system', 'user', 'assistant'])
@@ -920,6 +925,88 @@ export interface TranslationErrorEvent {
   message: string
 }
 
+/* ─── Career story bank (Phase 2) ──────────────────────────────────── */
+
+/** Answer frameworks the bank supports, each with its own labelled fields. */
+export const StoryFrameworkSchema = z.enum(['star', 'car', 'par', 'soar', 'answer-first'])
+export type StoryFramework = z.infer<typeof StoryFrameworkSchema>
+
+export const STORY_FRAMEWORK_FIELDS: Record<StoryFramework, Array<{ key: StoryFieldKey; label: string }>> = {
+  star: [
+    { key: 'situation', label: 'Situation' },
+    { key: 'task', label: 'Task' },
+    { key: 'action', label: 'Action' },
+    { key: 'result', label: 'Result' }
+  ],
+  car: [
+    { key: 'situation', label: 'Challenge' },
+    { key: 'action', label: 'Action' },
+    { key: 'result', label: 'Result' }
+  ],
+  par: [
+    { key: 'situation', label: 'Problem' },
+    { key: 'action', label: 'Action' },
+    { key: 'result', label: 'Result' }
+  ],
+  soar: [
+    { key: 'situation', label: 'Situation' },
+    { key: 'task', label: 'Obstacle' },
+    { key: 'action', label: 'Action' },
+    { key: 'result', label: 'Result' }
+  ],
+  'answer-first': [
+    { key: 'answerFirst', label: 'Direct answer' },
+    { key: 'action', label: 'Supporting evidence' }
+  ]
+}
+
+export type StoryFieldKey = 'situation' | 'task' | 'action' | 'result' | 'answerFirst'
+
+export interface CareerStory {
+  storyId: string
+  profileId: string
+  title: string
+  framework: StoryFramework
+  situation: string
+  task: string
+  action: string
+  result: string
+  answerFirst: string
+  /** Skills/competencies this story demonstrates. */
+  skills: string[]
+  /** Role or employer the story belongs to (free text). */
+  role: string
+  /** 'model' = AI draft that the user has not saved as their own yet. */
+  origin: 'user' | 'model'
+  createdAt: string
+  updatedAt: string
+}
+
+export const StoryUpsertRequestSchema = z.object({
+  storyId: z.string().min(1).max(64).optional(),
+  title: z.string().min(1).max(160),
+  framework: StoryFrameworkSchema,
+  situation: z.string().max(4_000).default(''),
+  task: z.string().max(4_000).default(''),
+  action: z.string().max(6_000).default(''),
+  result: z.string().max(4_000).default(''),
+  answerFirst: z.string().max(2_000).default(''),
+  skills: z.array(z.string().min(1).max(60)).max(20).default([]),
+  role: z.string().max(160).default('')
+})
+export type StoryUpsertRequest = z.infer<typeof StoryUpsertRequestSchema>
+
+export const StoryIdRequestSchema = z.object({ storyId: z.string().min(1).max(64) })
+
+export const StoryDraftRequestSchema = z.object({
+  framework: StoryFrameworkSchema,
+  /** Optional angle, e.g. "conflict" or "leadership". */
+  focus: z.string().max(200).default(''),
+  /** Facts the draft may use; defaults to the active profile's facts. */
+  facts: z.array(z.string().max(500)).max(50).optional()
+})
+export type StoryDraftRequest = z.infer<typeof StoryDraftRequestSchema>
+
 export const AppSettingsSchema = z.object({
   providers: z.array(ProviderConfigSchema).max(20).default([]),
   activeProviderId: z.string().min(1).max(64).nullable().default(null),
@@ -1282,4 +1369,14 @@ export interface CopilotApi {
   testTranslation(text: string): Promise<{ ok: boolean; text: string; providerLabel: string; message?: string }>
   onTranslationResult(cb: (e: TranslationResultEvent) => void): () => void
   onTranslationError(cb: (e: TranslationErrorEvent) => void): () => void
+  /* career story bank */
+  listStories(): Promise<{ stories: CareerStory[] }>
+  upsertStory(req: StoryUpsertRequest): Promise<{ ok: boolean; story?: CareerStory; message?: string }>
+  deleteStory(storyId: string): Promise<{ ok: boolean }>
+  draftStory(req: StoryDraftRequest): Promise<{
+    ok: boolean
+    draft?: Omit<StoryUpsertRequest, 'storyId'>
+    providerLabel?: string
+    message?: string
+  }>
 }

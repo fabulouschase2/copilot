@@ -121,6 +121,34 @@ Verified:
 Not verified: cloud providers (no key), non-English source audio, and a real microphone session
 for translation. Evidence and caveats: `docs/live-translation.md`.
 
+## Phase 2 — career story bank (delivered; docx + fact confirmation still open)
+
+Implemented:
+
+- SQLite **schema v4**: additive `career_stories` table, index, safe migration from
+  v2/v3, no alteration of existing tables.
+- `src/main/services/stories/story-service.ts` — CRUD, deterministic relevance ranking with
+  reasons, prompt rendering, and fact-grounded draft generation via the active provider.
+- **Stories** panel: list/search, create/edit/delete, framework picker (STAR/CAR/PAR/SOAR/
+  answer-first) with per-framework field labels, skills, role, and a draft action.
+- Interview integration: the top-ranked verified stories are appended to the interview prompt
+  (`VERIFIED CAREER STORIES` block), never to meeting prompts.
+- Profile scoping on read, write and delete; a story from another profile cannot be edited.
+
+Verified:
+
+- Real draft via Ollama `qwen2.5:1.5b`: grounded in the supplied facts, 17.9 s, saved, then
+  retrieved by relevance with an explainable reason (`score 0.505`).
+- `tests/stories-phase2.test.ts`: 23 tests (tokenizer, ranking weights and caps, CRUD rules,
+  cross-profile refusal, prompt block, JSON extraction, draft failures, SQLite round-trip).
+- Full suite after the phase: **353 / 353 passed**; typecheck and build clean.
+
+Observed limitation: the 1.5B model embellished one outcome (“improved team productivity”)
+beyond the facts. Drafts are therefore never auto-saved and the editor requires review.
+Evidence: `docs/career-story-bank.md`.
+
+Still open in this phase: DOCX résumé import and a per-fact confirmation workflow.
+
 ## Remaining phases
 
 Tracked in `FEATURE_STATUS.md`. Cloud sync, billing and the phone companion require

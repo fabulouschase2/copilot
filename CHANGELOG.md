@@ -6,6 +6,10 @@ All notable user-facing changes. Versions follow the app's `package.json`.
 
 ### Added
 
+- **Career Story Bank** (Phase 2): keep your own experiences in STAR, CAR, PAR, SOAR or
+  answer-first form, search them, and let the Interview view attach the most relevant ones to
+  each question. Drafts can be generated from confirmed profile facts and are never saved
+  automatically. Adds SQLite schema v4.
 - **Live translation** (Phase 4): capture mic or system audio and see each finalized utterance
   translated into any of 49 target languages, with the producing provider named on every line.
   Translated captions also appear in the private overlay. Verified with a real local model

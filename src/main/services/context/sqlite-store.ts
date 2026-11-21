@@ -14,7 +14,7 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { ProfileCategory } from '../../../shared/protocol'
 
-export const SCHEMA_VERSION = 3
+export const SCHEMA_VERSION = 4
 
 export interface DocumentRecord {
   sourceId: string
@@ -38,6 +38,25 @@ export interface ProfileFactRecord {
 export interface ProfileRecord {
   profileId: string
   name: string
+  createdAt: string
+  updatedAt: string
+}
+
+/** A career story (Phase 2). Framework fields stay as text; the UI renders
+ *  them under the labels the framework defines. */
+export interface StoryRecord {
+  storyId: string
+  profileId: string
+  title: string
+  framework: string
+  situation: string
+  task: string
+  action: string
+  result: string
+  answerFirst: string
+  skills: string[]
+  role: string
+  origin: 'user' | 'model'
   createdAt: string
   updatedAt: string
 }
@@ -155,7 +174,7 @@ export class SQLiteStore {
       `)
       this.db
         .prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
-        .run('schema_version', String(SCHEMA_VERSION))
+        .run('schema_version', '2')
     }
     // v2 → v3: profiles, per-profile facts, meeting metadata, practice sessions.
     if (current < 3) {
@@ -211,6 +230,31 @@ export class SQLiteStore {
       this.db
         .prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
         .run('schema_version', '3')
+    }
+    // v3 → v4: career story bank (Phase 2). Additive table; existing data untouched.
+    if (current < 4) {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS career_stories (
+          story_id TEXT PRIMARY KEY,
+          profile_id TEXT NOT NULL DEFAULT '${DEFAULT_PROFILE_ID}',
+          title TEXT NOT NULL,
+          framework TEXT NOT NULL CHECK(framework IN ('star','car','par','soar','answer-first')),
+          situation TEXT NOT NULL DEFAULT '',
+          task TEXT NOT NULL DEFAULT '',
+          action TEXT NOT NULL DEFAULT '',
+          result TEXT NOT NULL DEFAULT '',
+          answer_first TEXT NOT NULL DEFAULT '',
+          skills_json TEXT NOT NULL DEFAULT '[]',
+          role TEXT NOT NULL DEFAULT '',
+          origin TEXT NOT NULL CHECK(origin IN ('user','model')),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_career_stories_profile ON career_stories(profile_id);
+      `)
+      this.db
+        .prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+        .run('schema_version', '4')
     }
   }
 
@@ -329,6 +373,50 @@ export class SQLiteStore {
   listFacts(profileId?: string): ProfileFactRecord[] {
     const all = (this.stmts.allFacts.all() as Array<Record<string, unknown>>).map(rowToFact)
     return profileId ? all.filter((f) => f.profileId === profileId) : all
+  }
+
+  /* ── Career story bank (Phase 2) ─────────────────────────────────────── */
+
+  listStories(profileId?: string): StoryRecord[] {
+    const rows = profileId
+      ? (this.db.prepare('SELECT * FROM career_stories WHERE profile_id = ? ORDER BY updated_at DESC').all(profileId) as Array<Record<string, unknown>>)
+      : (this.db.prepare('SELECT * FROM career_stories ORDER BY updated_at DESC').all() as Array<Record<string, unknown>>)
+    return rows.map(rowToStory)
+  }
+
+  getStory(storyId: string): StoryRecord | null {
+    const row = this.db.prepare('SELECT * FROM career_stories WHERE story_id = ?').get(storyId) as
+      | Record<string, unknown>
+      | undefined
+    return row ? rowToStory(row) : null
+  }
+
+  saveStory(story: StoryRecord): void {
+    this.db
+      .prepare(
+        'INSERT OR REPLACE INTO career_stories (story_id, profile_id, title, framework, situation, task, action, result, answer_first, skills_json, role, origin, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      )
+      .run(
+        story.storyId,
+        story.profileId,
+        story.title,
+        story.framework,
+        story.situation,
+        story.task,
+        story.action,
+        story.result,
+        story.answerFirst,
+        JSON.stringify(story.skills),
+        story.role,
+        story.origin,
+        story.createdAt,
+        story.updatedAt
+      )
+  }
+
+  deleteStory(storyId: string): boolean {
+    const result = this.db.prepare('DELETE FROM career_stories WHERE story_id = ?').run(storyId)
+    return Number(result.changes ?? 0) > 0
   }
 
   addFact(fact: ProfileFactRecord): void {
@@ -628,6 +716,34 @@ function rowToPractice(row: Record<string, unknown>): PracticeSessionRecord {
     role: String(row.role ?? ''),
     jobDescription: String(row.job_description ?? ''),
     scorecardJson: row.scorecard_json === null || row.scorecard_json === undefined ? null : String(row.scorecard_json),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  }
+}
+
+function rowToStory(row: Record<string, unknown>): StoryRecord {
+  let skills: string[] = []
+  try {
+    const parsed = JSON.parse(String(row.skills_json ?? '[]')) as unknown
+    if (Array.isArray(parsed)) skills = parsed.filter((s): s is string => typeof s === 'string')
+  } catch {
+    skills = [] // corrupt JSON must never break listing
+  }
+  const framework = String(row.framework)
+  const known = ['star', 'car', 'par', 'soar', 'answer-first']
+  return {
+    storyId: String(row.story_id),
+    profileId: String(row.profile_id ?? DEFAULT_PROFILE_ID),
+    title: String(row.title),
+    framework: known.includes(framework) ? framework : 'star',
+    situation: String(row.situation ?? ''),
+    task: String(row.task ?? ''),
+    action: String(row.action ?? ''),
+    result: String(row.result ?? ''),
+    answerFirst: String(row.answer_first ?? ''),
+    skills,
+    role: String(row.role ?? ''),
+    origin: row.origin === 'model' ? 'model' : 'user',
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at)
   }

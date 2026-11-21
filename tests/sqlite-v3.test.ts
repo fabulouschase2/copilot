@@ -61,7 +61,9 @@ describe('schema v3 migration', () => {
     const p = dbPath()
     makeV2Database(p)
     const store = new SQLiteStore(p)
-    expect(SCHEMA_VERSION).toBe(3)
+    // The schema now advances past v3 (v4 adds the career story bank); the
+    // point of this test is that a v2 database upgrades without data loss.
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(3)
 
     // Existing data preserved.
     expect(store.listDocuments()).toHaveLength(1)

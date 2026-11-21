@@ -22,6 +22,9 @@ import {
   NotesExportRequestSchema,
   OverlayContentSchema,
   OverlaySetRequestSchema,
+  StoryDraftRequestSchema,
+  StoryIdRequestSchema,
+  StoryUpsertRequestSchema,
   WhisperConfigureRequestSchema,
   PracticeIdRequestSchema,
   PracticeStartRequestSchema,
@@ -204,6 +207,15 @@ const api: CopilotApi = {
     on(IPC.translationResult, cb),
   onTranslationError: (cb: (e: import('../shared/protocol').TranslationErrorEvent) => void) =>
     on(IPC.translationError, cb),
+
+  /* career story bank (Phase 2) */
+  listStories: () => ipcRenderer.invoke(IPC.storiesList),
+  upsertStory: (req: z.infer<typeof StoryUpsertRequestSchema>) =>
+    ipcRenderer.invoke(IPC.storiesUpsert, StoryUpsertRequestSchema.parse(req)),
+  deleteStory: (storyId: string) =>
+    ipcRenderer.invoke(IPC.storiesDelete, StoryIdRequestSchema.parse({ storyId })),
+  draftStory: (req: z.infer<typeof StoryDraftRequestSchema>) =>
+    ipcRenderer.invoke(IPC.storiesDraft, StoryDraftRequestSchema.parse(req)),
 
   onChatChunk: (cb: (e: ChatChunkEvent) => void) => {
     const listener = (_e: unknown, payload: ChatChunkEvent): void => cb(payload)

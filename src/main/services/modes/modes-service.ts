@@ -30,6 +30,11 @@ export interface ModeDeps {
   getResponseLanguage?: () => string
   /** Saved-meeting transcript lookup for ask-about-saved-meeting. Null when unknown. */
   getSavedMeetingTranscript?: (meetingId: string) => string | null
+  /**
+   * Most relevant verified career stories, rendered as a prompt block.
+   * Empty when the bank is empty or nothing matches.
+   */
+  getStoryBlock?: (question: string) => string
   /** User-initiated save; implemented with dialog+fs in main wiring. */
   saveText: (defaultName: string, content: string) => Promise<{ ok: boolean; canceled?: boolean; message?: string }>
 }
@@ -147,8 +152,10 @@ export class ModesService {
       req.detail ?? 'concise',
       this.deps.getResponseLanguage?.() ?? 'auto'
     )
+    const storyBlock = this.deps.getStoryBlock?.(req.question) ?? ''
     const user =
       `Question: ${req.question}\n\n${renderModeContextBlock(retrieval.items)}` +
+      (storyBlock.length > 0 ? `\n\n${storyBlock}` : '') +
       (evidenceLevel === 'none'
         ? '\n\n(No supporting evidence was found in the user\'s context — follow the missing-details rule.)'
         : '')

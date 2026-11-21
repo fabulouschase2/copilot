@@ -54,8 +54,9 @@ import { SettingsStore } from './services/settings-store'
 import { SttRegistry } from './services/stt/stt-registry'
 import type { PracticeService } from './services/practice/practice-service'
 import type { TranslationService } from './services/translation/translation-service'
+import type { StoryBankService } from './services/stories/story-service'
 import type { OverlayController } from './overlay-window'
-import { OverlayContentSchema, OverlaySetRequestSchema, WhisperConfigureRequestSchema } from '../shared/protocol'
+import { OverlayContentSchema, OverlaySetRequestSchema, WhisperConfigureRequestSchema, StoryDraftRequestSchema, StoryIdRequestSchema, StoryUpsertRequestSchema } from '../shared/protocol'
 
 export interface IpcDeps {
   settings: SettingsStore
@@ -71,6 +72,7 @@ export interface IpcDeps {
   permissionGate: PermissionGate
   overlay: OverlayController
   translation: TranslationService
+  stories: StoryBankService
   getWindow: () => BrowserWindow | null
   persistence: {
     status: () => import('../shared/protocol').ContextPersistenceStatus
@@ -555,5 +557,27 @@ export function registerIpcHandlers(deps: IpcDeps): void {
       return { ok: false, text: '', providerLabel: 'none', message: 'Enter up to 5000 characters to translate.' }
     }
     return deps.translation.translateDetached(raw)
+  })
+
+  /* ── Career story bank (Phase 2) ───────────────────────────────────── */
+
+  ipcMain.handle(IPC.storiesList, () => ({ stories: deps.stories.list() }))
+
+  ipcMain.handle(IPC.storiesUpsert, (_e, raw: unknown) => {
+    const parsed = StoryUpsertRequestSchema.safeParse(raw)
+    if (!parsed.success) return { ok: false, message: 'Invalid story fields' }
+    return deps.stories.upsert(parsed.data)
+  })
+
+  ipcMain.handle(IPC.storiesDelete, (_e, raw: unknown) => {
+    const parsed = StoryIdRequestSchema.safeParse(raw)
+    if (!parsed.success) return { ok: false }
+    return { ok: deps.stories.remove(parsed.data.storyId) }
+  })
+
+  ipcMain.handle(IPC.storiesDraft, (_e, raw: unknown) => {
+    const parsed = StoryDraftRequestSchema.safeParse(raw)
+    if (!parsed.success) return { ok: false, message: 'Invalid draft request' }
+    return deps.stories.draft(parsed.data)
   })
 }

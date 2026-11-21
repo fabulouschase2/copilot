@@ -20,6 +20,7 @@ import { migrateLegacyJson } from './services/context/migration'
 import { MeetingSaveRequestSchema, WhisperConfigureRequest } from '../shared/protocol'
 import { LocalWhisperManager, detectWhisperInstalls } from './services/stt/local-whisper'
 import { TranslationService } from './services/translation/translation-service'
+import { StoryBankService } from './services/stories/story-service'
 import { ModesService } from './services/modes/modes-service'
 import { OverlayController } from './overlay-window'
 import { PracticeService } from './services/practice/practice-service'
@@ -87,6 +88,13 @@ if (!SINGLE_INSTANCE_LOCK) {
     if (process.env['COPILOT_SELFTEST'] === 'translation') {
       void import('./selftest').then(async ({ runTranslationSelfTest }) => {
         await runTranslationSelfTest()
+        app.exit(0)
+      })
+      return
+    }
+    if (process.env['COPILOT_SELFTEST'] === 'story') {
+      void import('./selftest').then(async ({ runStorySelfTest }) => {
+        await runStorySelfTest()
         app.exit(0)
       })
       return
@@ -179,6 +187,29 @@ if (!SINGLE_INSTANCE_LOCK) {
         includeSession: true
       })
     )
+    // Phase 2: career story bank. Store methods are closures so a database
+    // restore (which swaps contextSqlite) is picked up without re-wiring.
+    const stories = new StoryBankService({
+      store: {
+        listStories: (profileId) => contextSqlite.listStories(profileId),
+        getStory: (storyId) => contextSqlite.getStory(storyId),
+        saveStory: (story) => contextSqlite.saveStory(story),
+        deleteStory: (storyId) => contextSqlite.deleteStory(storyId)
+      },
+      getProfileId: () => settings.get().activeProfileId,
+      getFacts: (profileId) => {
+        try {
+          return contextSqlite.listFacts(profileId).map((f) => f.text)
+        } catch {
+          return []
+        }
+      },
+      resolveProvider: () => {
+        const r = registry.resolveActive()
+        return r ? { provider: r.provider, model: r.model } : null
+      }
+    })
+
     const modes = new ModesService({
       resolveProvider: () => {
         const r = registry.resolveActive()
@@ -187,6 +218,8 @@ if (!SINGLE_INSTANCE_LOCK) {
       retrieve: (question, options) => contextService.retrieve(question, options),
       getSessionId: () => contextService.sessionId,
       getResponseLanguage: responseLanguage,
+      // Relevant verified stories are appended to interview prompts only.
+      getStoryBlock: (question) => stories.promptBlock(question),
       getSavedMeetingTranscript: (meetingId) => {
         try {
           const m = contextSqlite.getMeeting(meetingId)
@@ -418,6 +451,7 @@ if (!SINGLE_INSTANCE_LOCK) {
       permissionGate,
       overlay,
       translation,
+      stories,
       getWindow: getMainWindow,
       listMeetings,
       saveMeeting,

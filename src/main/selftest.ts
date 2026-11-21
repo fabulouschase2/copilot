@@ -764,3 +764,82 @@ export async function runTranslationSelfTest(): Promise<void> {
   console.log('[selftest]', JSON.stringify(report))
   service.reset(null)
 }
+
+/**
+ * Phase 2 verification: draft a story from confirmed facts with a real model,
+ * then save it through the service and read it back. The draft must be built
+ * from the facts only — no invented employers or numbers.
+ */
+export async function runStorySelfTest(): Promise<void> {
+  const { OpenAICompatibleProvider } = await import('./services/providers/openai-compatible')
+  const { StoryBankService } = await import('./services/stories/story-service')
+
+  const baseUrl = process.env['COPILOT_TRANSLATE_BASEURL'] ?? 'http://127.0.0.1:11434/v1'
+  const model = process.env['COPILOT_TRANSLATE_MODEL'] ?? 'qwen2.5:1.5b'
+  const provider = new OpenAICompatibleProvider({
+    id: 'selftest-ollama',
+    label: 'Ollama (self-test)',
+    baseUrl,
+    apiKey: '',
+    model,
+    vision: false
+  })
+
+  const facts = [
+    'Led a team of four engineers on a payments platform',
+    'Reduced CI build times by 40 percent by caching dependencies and sharding tests',
+    'Migrated 12 services from JavaScript to TypeScript'
+  ]
+  const rows = new Map<string, import('./services/context/sqlite-store').StoryRecord>()
+  const service = new StoryBankService({
+    store: {
+      listStories: (profileId) => [...rows.values()].filter((s) => !profileId || s.profileId === profileId),
+      getStory: (id) => rows.get(id) ?? null,
+      saveStory: (s) => rows.set(s.storyId, s),
+      deleteStory: (id) => rows.delete(id)
+    },
+    getProfileId: () => 'default',
+    getFacts: () => facts,
+    resolveProvider: () => ({ provider, model }),
+    idFactory: () => 'story-selftest'
+  })
+
+  const t0 = Date.now()
+  const draft = await service.draft({ framework: 'star', focus: 'delivery impact' })
+  const draftMs = Date.now() - t0
+
+  let saved: unknown = null
+  let ranked: unknown = null
+  if (draft.ok && draft.draft) {
+    saved = service.upsert({ ...draft.draft, storyId: undefined })
+    ranked = service.retrieve('Tell me about improving engineering delivery').map((h) => ({
+      sourceId: h.sourceId,
+      score: h.score,
+      reason: h.reason
+    }))
+  }
+
+  const report = {
+    baseUrl,
+    model,
+    draftOk: draft.ok,
+    draftMs,
+    providerLabel: draft.providerLabel,
+    error: draft.ok ? undefined : draft.message,
+    draft: draft.draft
+      ? {
+          title: draft.draft.title,
+          situation: draft.draft.situation.slice(0, 160),
+          task: draft.draft.task.slice(0, 160),
+          action: draft.draft.action.slice(0, 200),
+          result: draft.draft.result.slice(0, 160),
+          skills: draft.draft.skills
+        }
+      : undefined,
+    saveOk: (saved as { ok?: boolean } | null)?.ok ?? false,
+    storedCount: rows.size,
+    ranked
+  }
+  // eslint-disable-next-line no-console
+  console.log('[selftest]', JSON.stringify(report))
+}

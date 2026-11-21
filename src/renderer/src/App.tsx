@@ -9,11 +9,13 @@ import { ReadScreenModal } from './ReadScreenModal'
 import { AudioDiagnosticsModal } from './AudioDiagnosticsModal'
 import { OverlayPanel } from './OverlayPanel'
 import { TranslationPanel } from './TranslationPanel'
+import { StoryPanel } from './StoryPanel'
 
-type View = 'interview' | 'practice' | 'meetings' | 'translate' | 'overlay' | 'chat' | 'setup'
+type View = 'interview' | 'stories' | 'practice' | 'meetings' | 'translate' | 'overlay' | 'chat' | 'setup'
 
 const NAV: Array<{ id: View; label: string }> = [
   { id: 'interview', label: 'Interview' },
+  { id: 'stories', label: 'Stories' },
   { id: 'practice', label: 'Practice' },
   { id: 'meetings', label: 'Meetings' },
   { id: 'translate', label: 'Translate' },
@@ -161,6 +163,7 @@ export function App(): React.JSX.Element {
           />
         )}
         {view === 'practice' && <PracticePanel settings={settings} />}
+        {view === 'stories' && <StoryPanel settings={settings} />}
         {view === 'meetings' && <MeetingPanel settings={settings} />}
         {view === 'translate' && <TranslationPanel settings={settings} onChange={persistSettings} />}
         {view === 'overlay' && (
