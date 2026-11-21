@@ -10,7 +10,7 @@ Last updated: 2026-11-21 (after Phase 6).
 |---|---|---|---|
 | Live audio capture (mic + Windows loopback) | Working | Working | `docs/full-functionality-audit.md`; audio pipeline tests |
 | Live transcription (cloud STT) | Working pipeline, blocked on user key | Working pipeline | Needs a Groq/OpenAI key; provider 401 surfaces verbatim |
-| Local transcription (whisper.cpp) | Not integrated | Planned (Phase 1) | whisper-cli.exe + ggml-tiny.bin verified present on this machine |
+| Local transcription (whisper.cpp) | Not integrated | **Implemented + verified** — managed server | `docs/local-whisper.md`: 11 s audio → 0.53 s, `/inference` contract |
 | AI interview answers | Working | Working | Phase 3 adds story-bank grounding |
 | Career profile + fact CRUD | Multiple profiles, facts | Working | Confirmation workflow planned (Phase 2) |
 | Résumé import | PDF/TXT/MD | PDF/TXT/MD | DOCX planned (Phase 2) |

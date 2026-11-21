@@ -54,7 +54,7 @@ import { SettingsStore } from './services/settings-store'
 import { SttRegistry } from './services/stt/stt-registry'
 import type { PracticeService } from './services/practice/practice-service'
 import type { OverlayController } from './overlay-window'
-import { OverlayContentSchema, OverlaySetRequestSchema } from '../shared/protocol'
+import { OverlayContentSchema, OverlaySetRequestSchema, WhisperConfigureRequestSchema } from '../shared/protocol'
 
 export interface IpcDeps {
   settings: SettingsStore
@@ -81,6 +81,16 @@ export interface IpcDeps {
   deleteMeeting: (meetingId: string) => { ok: boolean }
   getMeeting: (meetingId: string) => MeetingDetail | undefined
   getAudioDiagnostics: () => import('../shared/protocol').AudioDiagnosticsInfo
+  whisper: {
+    status: () => import('../shared/protocol').WhisperStatusInfo
+    start: () => Promise<import('../shared/protocol').WhisperStatusInfo>
+    stop: () => import('../shared/protocol').WhisperStatusInfo
+    detect: () => import('../shared/protocol').WhisperCandidate[]
+    configure: (req: import('../shared/protocol').WhisperConfigureRequest) => {
+      status: import('../shared/protocol').WhisperStatusInfo
+      settings: import('../shared/protocol').AppSettings
+    }
+  }
 }
 
 /**
@@ -128,6 +138,18 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   ipcMain.on(IPC.overlayPush, (_e, raw: unknown) => {
     const parsed = OverlayContentSchema.safeParse(raw)
     if (parsed.success) deps.overlay.push(parsed.data)
+  })
+
+  /* ── Managed local whisper.cpp (Phase 1) ────────────────────────────── */
+
+  ipcMain.handle(IPC.whisperDetect, () => ({ candidates: deps.whisper.detect() }))
+  ipcMain.handle(IPC.whisperStatus, () => deps.whisper.status())
+  ipcMain.handle(IPC.whisperStart, () => deps.whisper.start())
+  ipcMain.handle(IPC.whisperStop, () => deps.whisper.stop())
+  ipcMain.handle(IPC.whisperConfigure, (_e, raw: unknown) => {
+    const parsed = WhisperConfigureRequestSchema.safeParse(raw)
+    if (!parsed.success) return { status: deps.whisper.status(), settings: settings.get() }
+    return deps.whisper.configure(parsed.data)
   })
 
   /* ── Personal profiles (transformation) ─────────────────────────────── */

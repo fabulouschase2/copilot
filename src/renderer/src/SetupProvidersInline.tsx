@@ -159,6 +159,7 @@ export function SetupSttInline(props: {
                   id: `s-${Date.now().toString(36)}`,
                   label: 'New STT provider',
                   kind: 'stt-segment' as const,
+                  protocol: 'openai' as const,
                   baseUrl: 'https://api.groq.com/openai/v1',
                   model: 'whisper-large-v3',
                   language: 'en',

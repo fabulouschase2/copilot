@@ -7,6 +7,7 @@ import {
   ProviderInfo
 } from '../../shared/protocol'
 import { SetupProvidersInline, SetupSttInline } from './SetupProvidersInline'
+import { WhisperPanel } from './WhisperPanel'
 import { KeyField } from './KeyField'
 
 /**
@@ -465,6 +466,7 @@ function ProviderEditor(props: { settings: AppSettings; onChange: (s: AppSetting
       <SetupProvidersInline settings={settings} onChange={onChange} />
       <div className="section-title">Transcription providers</div>
       <SetupSttInline settings={settings} onChange={onChange} />
+      <WhisperPanel settings={settings} onChange={onChange} />
     </>
   )
 }

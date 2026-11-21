@@ -6,6 +6,9 @@ All notable user-facing changes. Versions follow the app's `package.json`.
 
 ### Added
 
+- **Local speech recognition** (Phase 1): Copilot manages a local whisper.cpp server — detection,
+  start/stop, readiness checks, crash reporting — so transcription can run entirely on-device with
+  no API key. Measured 11 s of audio transcribed in 0.53 s on CPU with the `tiny` model.
 - **Private overlay window** (Phase 6): a frameless, always-on-top assistant surface
   that shows live interviewer captions and the latest answer, with font-size and
   opacity controls.
@@ -27,6 +30,8 @@ All notable user-facing changes. Versions follow the app's `package.json`.
 
 ### Notes
 
+- whisper.cpp's server exposes `/inference`, not the OpenAI `/audio/transcriptions` route
+  (verified 404 on 1.9.6-dev); the local adapter uses the real contract.
 - Capture exclusion requires Windows 10 version 2004 (build 19041) or newer. On older
   builds and other platforms the overlay still works and says exclusion is unavailable.
 - OBS Studio and Google Meet were not available for testing; their behaviour is

@@ -66,6 +66,33 @@ Verified:
 Not verified (do not claim): OBS Studio and Google Meet capture behaviour — neither was
 available on this machine.
 
+## Phase 1 — managed local transcription (delivered)
+
+Implemented:
+
+- `src/main/services/stt/local-whisper.ts` — child-process manager (detect, spawn, readiness
+  poll, crash reporting, bounded log tail, stop on quit) plus `LocalWhisperStt`, an adapter for
+  the server's real `/inference` contract.
+- `src/main/services/stt/stt-registry.ts` — builds the local adapter when a provider row uses
+  `protocol: 'whisper-cpp'`; all existing providers keep the OpenAI path.
+- Settings → Providers → **Local speech recognition (whisper.cpp)**: executable/model paths,
+  port, threads, language, detect-install, start/stop, live status, log tail, and a single
+  control that creates and activates the `local-whisper` transcription row.
+- `whisper:*` IPC channels, validated with zod; the manager is disposed on `will-quit`.
+
+Verified:
+
+- `/v1/audio/transcriptions` returns **404** on whisper.cpp 1.9.6-dev and `/inference` returns
+  `{text}` — measured before writing the adapter, so no OpenAI assumption was baked in.
+- Managed server + real adapter + real `jfk.wav`: started in 337 ms, transcribed 11 s of audio
+  in 533 ms on CPU, transcript matched the JFK line.
+- Zero orphan `whisper-server` processes after app exit.
+- `tests/whisper-phase1.test.ts`: 15 tests (detection ordering, missing exe/model, lifecycle,
+  unexpected exit, `/inference` request shape, no-fake-partials, schema bounds).
+- Full suite after the phase: **315 / 315 passed**; typecheck and build clean.
+
+Evidence: `docs/local-whisper.md`.
+
 ## Remaining phases
 
 Tracked in `FEATURE_STATUS.md`. Cloud sync, billing and the phone companion require

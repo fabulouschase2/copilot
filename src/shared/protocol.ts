@@ -100,7 +100,13 @@ export const IPC = {
   overlayHide: 'overlay:hide',
   overlayPush: 'overlay:push',
   overlayState: 'overlay:state',
-  overlayContent: 'overlay:content'
+  overlayContent: 'overlay:content',
+  /* Managed local whisper.cpp (Phase 1) */
+  whisperDetect: 'whisper:detect',
+  whisperStatus: 'whisper:status',
+  whisperStart: 'whisper:start',
+  whisperStop: 'whisper:stop',
+  whisperConfigure: 'whisper:configure'
 } as const
 
 export const ChatRoleSchema = z.enum(['system', 'user', 'assistant'])
@@ -702,6 +708,12 @@ export const STTProviderSchema = z.object({
   /** stt-segment: OpenAI-compatible /audio/transcriptions (utterance-final). */
   /** stt-stream: Deepgram-style WebSocket (interim partials + finals). */
   kind: z.enum(['stt-segment', 'stt-stream']),
+  /**
+   * Wire format for HTTP-batch adapters. whisper.cpp's server does NOT expose
+   * /v1/audio/transcriptions (verified: 404 on 1.9.6-dev); it answers at
+   * /inference with a multipart body and returns { text }.
+   */
+  protocol: z.enum(['openai', 'whisper-cpp']).default('openai'),
   baseUrl: z
     .string()
     .min(1)
@@ -728,6 +740,7 @@ export interface STTProviderInfo {
   id: string
   label: string
   kind: 'stt-segment' | 'stt-stream'
+  protocol: 'openai' | 'whisper-cpp'
   enabled: boolean
   model: string
   language: string
@@ -815,6 +828,61 @@ export interface OverlayStateInfo {
   lastErrorCode: number | null
 }
 
+/* ─── Managed local whisper.cpp (Phase 1) ────────────────────────────── */
+
+/**
+ * Local speech recognition. Empty paths mean "not configured yet"; the app
+ * detects a standard whisper.cpp checkout and offers it, but never assumes it.
+ */
+export const LocalWhisperSettingsSchema = z.object({
+  serverExe: z.string().max(1024).default(''),
+  modelPath: z.string().max(1024).default(''),
+  port: z.number().int().min(1024).max(65_535).default(8123),
+  threads: z.number().int().min(1).max(16).default(4),
+  language: z.string().min(2).max(16).default('auto'),
+  /** Start the server automatically when a session needs it. */
+  autoStart: z.boolean().default(true)
+})
+export type LocalWhisperSettings = z.infer<typeof LocalWhisperSettingsSchema>
+
+export interface WhisperCandidate {
+  serverExe: string
+  modelPath: string
+  modelSize: string
+  source: string
+}
+
+export type WhisperPhase = 'stopped' | 'starting' | 'running' | 'failed'
+
+export interface WhisperStatusInfo {
+  phase: WhisperPhase
+  port: number
+  baseUrl: string
+  serverExe: string
+  modelPath: string
+  serverExePresent: boolean
+  modelPresent: boolean
+  pid: number | null
+  message: string
+  lastError: string | null
+  /** Bounded tail of the server's own output (local, no secrets). */
+  logTail: string[]
+  /** True when a managed provider row is active for transcription. */
+  activeAsStt: boolean
+}
+
+export const WhisperConfigureRequestSchema = z.object({
+  serverExe: z.string().max(1024).optional(),
+  modelPath: z.string().max(1024).optional(),
+  port: z.number().int().min(1024).max(65_535).optional(),
+  threads: z.number().int().min(1).max(16).optional(),
+  language: z.string().min(2).max(16).optional(),
+  autoStart: z.boolean().optional(),
+  /** Create/activate the STT provider row that points at the managed server. */
+  useForTranscription: z.boolean().optional()
+})
+export type WhisperConfigureRequest = z.infer<typeof WhisperConfigureRequestSchema>
+
 export const AppSettingsSchema = z.object({
   providers: z.array(ProviderConfigSchema).max(20).default([]),
   activeProviderId: z.string().min(1).max(64).nullable().default(null),
@@ -852,6 +920,14 @@ export const AppSettingsSchema = z.object({
     opacity: 0.94,
     fontSize: 15,
     showCaptions: true
+  }),
+  localWhisper: LocalWhisperSettingsSchema.default({
+    serverExe: '',
+    modelPath: '',
+    port: 8123,
+    threads: 4,
+    language: 'auto',
+    autoStart: true
   })
 })
 export type AppSettings = z.infer<typeof AppSettingsSchema>
@@ -1153,4 +1229,10 @@ export interface CopilotApi {
   pushOverlayContent(content: OverlayContent): void
   onOverlayState(cb: (e: OverlayStateInfo) => void): () => void
   onOverlayContent(cb: (e: OverlayContent) => void): () => void
+  /* managed local whisper.cpp */
+  detectWhisper(): Promise<{ candidates: WhisperCandidate[]; message?: string }>
+  whisperStatus(): Promise<WhisperStatusInfo>
+  startWhisper(): Promise<WhisperStatusInfo>
+  stopWhisper(): Promise<WhisperStatusInfo>
+  configureWhisper(req: WhisperConfigureRequest): Promise<{ status: WhisperStatusInfo; settings: AppSettings }>
 }

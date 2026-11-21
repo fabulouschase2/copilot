@@ -22,6 +22,7 @@ import {
   NotesExportRequestSchema,
   OverlayContentSchema,
   OverlaySetRequestSchema,
+  WhisperConfigureRequestSchema,
   PracticeIdRequestSchema,
   PracticeStartRequestSchema,
   PracticeSubmitRequestSchema,
@@ -187,6 +188,14 @@ const api: CopilotApi = {
     on(IPC.overlayState, cb),
   onOverlayContent: (cb: (e: z.infer<typeof OverlayContentSchema>) => void) =>
     on(IPC.overlayContent, cb),
+
+  /* managed local whisper.cpp (Phase 1) */
+  detectWhisper: () => ipcRenderer.invoke(IPC.whisperDetect),
+  whisperStatus: () => ipcRenderer.invoke(IPC.whisperStatus),
+  startWhisper: () => ipcRenderer.invoke(IPC.whisperStart),
+  stopWhisper: () => ipcRenderer.invoke(IPC.whisperStop),
+  configureWhisper: (req: z.infer<typeof WhisperConfigureRequestSchema>) =>
+    ipcRenderer.invoke(IPC.whisperConfigure, WhisperConfigureRequestSchema.parse(req)),
 
   onChatChunk: (cb: (e: ChatChunkEvent) => void) => {
     const listener = (_e: unknown, payload: ChatChunkEvent): void => cb(payload)

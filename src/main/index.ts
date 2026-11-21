@@ -17,7 +17,8 @@ import { ScreenService } from './services/screen/screen-service'
 import { ContextService } from './services/context/context-service'
 import { SQLiteStore } from './services/context/sqlite-store'
 import { migrateLegacyJson } from './services/context/migration'
-import { MeetingSaveRequestSchema } from '../shared/protocol'
+import { MeetingSaveRequestSchema, WhisperConfigureRequest } from '../shared/protocol'
+import { LocalWhisperManager, detectWhisperInstalls } from './services/stt/local-whisper'
 import { ModesService } from './services/modes/modes-service'
 import { OverlayController } from './overlay-window'
 import { PracticeService } from './services/practice/practice-service'
@@ -29,6 +30,9 @@ import * as path from 'node:path'
 
 /** Consent TTL for screen analysis; captures never outlive an explicit arm. */
 const SCREEN_CONSENT_TTL_MS = 5 * 60_000
+
+/** Module-level so `will-quit` can stop a spawned whisper-server. */
+let whisperManager: LocalWhisperManager | null = null
 
 const SINGLE_INSTANCE_LOCK = app.requestSingleInstanceLock()
 if (!SINGLE_INSTANCE_LOCK) {
@@ -72,6 +76,13 @@ if (!SINGLE_INSTANCE_LOCK) {
       })
       return
     }
+    if (process.env['COPILOT_SELFTEST'] === 'whisper') {
+      void import('./selftest').then(async ({ runWhisperSelfTest }) => {
+        await runWhisperSelfTest()
+        app.exit(0)
+      })
+      return
+    }
     if (process.env['COPILOT_SELFTEST'] === 'provider-setup') {
       void import('./selftest').then(async ({ runProviderSetup }) => {
         await runProviderSetup()
@@ -107,7 +118,9 @@ if (!SINGLE_INSTANCE_LOCK) {
     const settings = SettingsStore.forUserData(userData)
     const creds = CredentialStore.forUserData(userData, getSafeStorage())
     const registry = new ProviderRegistry(settings, creds)
-    const sttRegistry = new SttRegistry(settings, creds)
+    const whisper = new LocalWhisperManager(() => settings.get().localWhisper)
+    whisperManager = whisper
+    const sttRegistry = new SttRegistry(settings, creds, whisper)
     const context = new ContextEngine()
     // Stage 9: SQLite-backed persistence with one-shot legacy JSON migration.
     let contextSqlite = new SQLiteStore(path.join(userData, 'context.db'))
@@ -368,6 +381,12 @@ if (!SINGLE_INSTANCE_LOCK) {
       }
     }
 
+    // True when the managed local Whisper row is the active transcription provider.
+    const isWhisperActive = (): boolean => {
+      const s = settings.get().stt
+      return s.providers.find((p) => p.id === s.activeSttProviderId)?.protocol === 'whisper-cpp'
+    }
+
     registerIpcHandlers({
       settings,
       creds,
@@ -387,6 +406,75 @@ if (!SINGLE_INSTANCE_LOCK) {
       deleteMeeting,
       getMeeting: meetingDetail,
       getAudioDiagnostics,
+      whisper: {
+        status: () => whisper.status(isWhisperActive()),
+        start: async () => {
+          await whisper.ensureStarted()
+          return whisper.status(isWhisperActive())
+        },
+        stop: () => {
+          whisper.stop()
+          return whisper.status(isWhisperActive())
+        },
+        detect: () => detectWhisperInstalls(),
+        configure: (req: WhisperConfigureRequest) => {
+          const current = settings.get()
+          const patch: Record<string, unknown> = {}
+          for (const [key, value] of Object.entries(req)) {
+            if (key !== 'useForTranscription' && value !== undefined) patch[key] = value
+          }
+          const localWhisper = { ...current.localWhisper, ...patch }
+          let stt = current.stt
+          const exists = stt.providers.some((p) => p.id === 'local-whisper')
+
+          if (req.useForTranscription === true) {
+            const row = {
+              id: 'local-whisper',
+              label: 'Local Whisper (whisper.cpp)',
+              kind: 'stt-segment' as const,
+              protocol: 'whisper-cpp' as const,
+              baseUrl: `http://127.0.0.1:${localWhisper.port}`,
+              model: 'whisper-1',
+              language: localWhisper.language,
+              enabled: true
+            }
+            stt = {
+              ...stt,
+              providers: [...stt.providers.filter((p) => p.id !== 'local-whisper'), row],
+              activeSttProviderId: 'local-whisper'
+            }
+          } else if (req.useForTranscription === false) {
+            stt = {
+              ...stt,
+              providers: stt.providers.filter((p) => p.id !== 'local-whisper'),
+              activeSttProviderId:
+                stt.activeSttProviderId === 'local-whisper' ? null : stt.activeSttProviderId
+            }
+          } else if (exists) {
+            // Keep the managed row consistent with port/language changes.
+            stt = {
+              ...stt,
+              providers: stt.providers.map((p) =>
+                p.id === 'local-whisper'
+                  ? {
+                      ...p,
+                      baseUrl: `http://127.0.0.1:${localWhisper.port}`,
+                      language: localWhisper.language
+                    }
+                  : p
+              )
+            }
+          }
+          const stored = settings.set({ ...current, localWhisper, stt })
+          // A port change invalidates the running server's URL.
+          if (current.localWhisper.port !== localWhisper.port) whisper.stop()
+          const active = stored.stt.providers.find((p) => p.id === stored.stt.activeSttProviderId)
+          return {
+            status: whisper.status(active?.protocol === 'whisper-cpp'),
+            settings: stored
+          }
+        }
+      },
       searchMeetings: (query: string) =>
         contextSqlite.searchMeetings(query).map((m) => ({
           meetingId: m.meetingId,
@@ -504,6 +592,9 @@ if (!SINGLE_INSTANCE_LOCK) {
 
   app.on('will-quit', () => {
     globalShortcut.unregisterAll()
+    // Never leave a spawned whisper-server behind.
+    whisperManager?.dispose()
+    whisperManager = null
   })
 }
 

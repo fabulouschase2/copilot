@@ -614,3 +614,89 @@ export async function runOverlayWindowSelfTest(): Promise<void> {
     /* best-effort */
   }
 }
+
+/** Minimal 16-bit PCM WAV reader (only what the sample needs). */
+function readWavPcm16(bytes: Buffer): Int16Array {
+  if (bytes.toString('ascii', 0, 4) !== 'RIFF') throw new Error('not a RIFF file')
+  let offset = 12
+  while (offset + 8 <= bytes.length) {
+    const id = bytes.toString('ascii', offset, offset + 4)
+    const size = bytes.readUInt32LE(offset + 4)
+    const body = offset + 8
+    if (id === 'data') {
+      const samples = Math.floor(Math.min(size, bytes.length - body) / 2)
+      const pcm = new Int16Array(samples)
+      for (let i = 0; i < samples; i += 1) pcm[i] = bytes.readInt16LE(body + i * 2)
+      return pcm
+    }
+    offset = body + size + (size % 2)
+  }
+  throw new Error('no data chunk')
+}
+
+/**
+ * Phase 1 verification: drive the managed whisper.cpp server through the real
+ * adapter with a real WAV and assert the transcript. Proves the child process,
+ * the /inference contract and the PCM path together.
+ */
+export async function runWhisperSelfTest(): Promise<void> {
+  const path = await import('node:path')
+  const { detectWhisperInstalls, LocalWhisperManager, LocalWhisperStt } = await import(
+    './services/stt/local-whisper'
+  )
+
+  const candidates = detectWhisperInstalls()
+  const chosen = candidates[0]
+  if (!chosen) {
+    // eslint-disable-next-line no-console
+    console.log('[selftest]', JSON.stringify({ ok: false, message: 'no whisper.cpp install detected' }))
+    return
+  }
+
+  let settings = {
+    serverExe: chosen.serverExe,
+    modelPath: chosen.modelPath,
+    port: 8137,
+    threads: 4,
+    language: 'auto',
+    autoStart: true
+  }
+  const manager = new LocalWhisperManager(() => settings)
+
+  const t0 = Date.now()
+  const started = await manager.ensureStarted()
+  const startMs = Date.now() - t0
+
+  const report: Record<string, unknown> = {
+    candidates: candidates.length,
+    modelSize: chosen.modelSize,
+    startOk: started.ok,
+    startMessage: started.message,
+    startMs
+  }
+
+  if (started.ok) {
+    const sample = process.env['WHISPER_SAMPLE'] ?? path.join(chosen.source, 'samples', 'jfk.wav')
+    try {
+      const pcm = readWavPcm16(nodeFs.readFileSync(sample))
+      const adapter = new LocalWhisperStt(manager, 'en')
+      const t1 = Date.now()
+      const result = await adapter.transcribe({ pcm })
+      report.transcribeMs = Date.now() - t1
+      report.sampleSeconds = Math.round((pcm.length / 16_000) * 10) / 10
+      report.text = result.text.slice(0, 200)
+      report.textMatches = /ask not what your country/i.test(result.text)
+      report.nonEmpty = result.text.length > 0
+    } catch (err) {
+      report.transcribeError = err instanceof Error ? err.message : String(err)
+    }
+    const status = manager.status(true)
+    report.phaseAfter = status.phase
+    report.pid = status.pid
+    report.logLines = status.logTail.length
+  }
+
+  // eslint-disable-next-line no-console
+  console.log('[selftest]', JSON.stringify(report))
+  manager.dispose()
+}
